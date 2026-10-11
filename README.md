@@ -1,4 +1,13 @@
-# Mk33
+<p align="center">
+  <img src="assets/banner.svg" alt="Mk33: long-horizon self-improving agents" width="100%">
+</p>
+
+<p align="center">
+  <a href="https://github.com/dulguuntsatsralt-cell/Mk33/actions/workflows/mk33-tests.yml"><img src="https://github.com/dulguuntsatsralt-cell/Mk33/actions/workflows/mk33-tests.yml/badge.svg" alt="tests"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-1700c7" alt="license: Apache-2.0"></a>
+  <img src="https://img.shields.io/badge/python-3.10%2B-1700c7" alt="python 3.10+">
+  <a href="paper/main.pdf"><img src="https://img.shields.io/badge/paper-PDF-1700c7" alt="paper PDF"></a>
+</p>
 
 Training recipe and reference code for agents that improve their own solutions over many hours.
 
