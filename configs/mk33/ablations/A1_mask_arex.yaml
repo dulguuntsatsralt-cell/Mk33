@@ -1,0 +1,5 @@
+inherit: ../default.yaml
+name: A1_mask_arex
+description: "A1: AREX-style mask: zero-weight rules only, every other turn weight 1."
+palm: {mode: arex}
+sft: {output_dir: checkpoints/A1_mask_arex}

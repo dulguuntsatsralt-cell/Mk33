@@ -1,0 +1,5 @@
+inherit: ../default.yaml
+name: A2_rlc_test_only
+description: "A2: train on uncompacted windows (truncated to max_len), run with RLC at test time."
+rlc_train: {mode: none}
+sft: {output_dir: checkpoints/A2_rlc_test_only}

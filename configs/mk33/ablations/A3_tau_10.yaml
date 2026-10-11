@@ -1,0 +1,5 @@
+inherit: ../default.yaml
+name: A3_tau_10
+description: "A3: acceptance threshold tau = 1.0 for both domains."
+selection: {tau: {ml: 1.0, judge: 1.0}}
+sft: {output_dir: checkpoints/A3_tau_10}

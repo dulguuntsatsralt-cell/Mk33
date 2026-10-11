@@ -1,0 +1,5 @@
+inherit: ../default.yaml
+name: A2_truncate
+description: "A2: no ledger; drop oldest turns at train and test time."
+rlc: {mode: truncate}
+sft: {output_dir: checkpoints/A2_truncate}

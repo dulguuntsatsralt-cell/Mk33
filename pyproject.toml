@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mk33"
+version = "0.1.0"
+description = "Mk33: a fully specified recipe and reference implementation for training long-horizon self-improving agents"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Dulguun Enkhtsatsral" }]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/dulguuntsatsralt-cell/Mk33"
+
+[project.optional-dependencies]
+mk33 = ["pyyaml", "openai"]
+mk33-train = ["pyyaml", "openai", "torch", "transformers>=4.46", "accelerate", "deepspeed"]
+dev = ["pyyaml", "pytest"]
+
+[project.scripts]
+mk33 = "mk33.cli:main"
+
+[tool.setuptools.package-dir]
+mk33 = "src/mk33"
+
+[tool.setuptools]
+packages = [
+  "mk33", "mk33.envs", "mk33.scaffold", "mk33.palm",
+  "mk33.selection", "mk33.train", "mk33.metrics", "mk33.bench",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

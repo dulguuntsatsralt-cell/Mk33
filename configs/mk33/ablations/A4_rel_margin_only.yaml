@@ -1,0 +1,5 @@
+inherit: ../default.yaml
+name: A4_rel_margin_only
+description: "A4: 5% margin only."
+filter: {use_sigma: false}
+sft: {output_dir: checkpoints/A4_rel_margin_only}

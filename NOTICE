@@ -1,0 +1,9 @@
+Mk33
+Copyright 2026 Dulguun Enkhtsatsral
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Mk33 implements a training recipe that builds on the method described in AREX-2
+(Qian et al., 2026, arXiv:2609.38288). The AREX-2 evaluation harness used for the
+benchmarks in the paper is available from its authors at
+https://github.com/VectorSpaceLab/AREX-2 and is not included here.

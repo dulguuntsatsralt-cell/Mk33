@@ -1,0 +1,5 @@
+inherit: ../default.yaml
+name: A4_no_filter
+description: "A4: no headroom filter."
+filter: {enabled: false}
+sft: {output_dir: checkpoints/A4_no_filter}

@@ -1,0 +1,5 @@
+inherit: ../default.yaml
+name: A1_mask_llm_judge
+description: "A1: weights from an LLM judge (labels file passed to `mk33 weights --labels`)."
+palm: {mode: labels}
+sft: {output_dir: checkpoints/A1_mask_llm_judge}

@@ -1,0 +1,5 @@
+inherit: ../default.yaml
+name: A1_mask_all
+description: "A1: loss on every assistant token (no masking)."
+palm: {mode: all}
+sft: {output_dir: checkpoints/A1_mask_all}

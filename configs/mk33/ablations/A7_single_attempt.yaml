@@ -1,0 +1,13 @@
+inherit: ../default.yaml
+name: A7_single_attempt
+description: >
+  A7: replace improvement trajectories with token-matched single-attempt trajectories from the
+  same environments (build with scripts/mk33/make_single_attempt.py). Tests whether
+  transfer comes from iteration or from extra agentic tokens.
+budget:
+  ml:    {max_tool_calls: 400, max_wall_s: 43200, max_rounds: 1}
+  judge: {max_tool_calls: 400, max_wall_s: 18000, max_rounds: 1}
+selection: {min_rounds: 1, require_iteration: false}
+sft:
+  train_files: [data/mk33/windows_single_attempt.jsonl, data/mk33/arex_research.jsonl]
+  output_dir: checkpoints/A7_single_attempt

@@ -1,0 +1,5 @@
+inherit: ../default.yaml
+name: A6_no_decontam
+description: "A6: skip decontamination; evaluate on both contaminated and clean splits."
+decontam: {enabled: false}
+sft: {output_dir: checkpoints/A6_no_decontam}

@@ -1,0 +1,6 @@
+inherit: ../default.yaml
+name: A5_runner_up_teacher
+description: "A5: trajectories collected with the runner-up teacher (pass its endpoint to `mk33 rollout`)."
+sft:
+  train_files: [data/mk33/windows_teacher2.jsonl, data/mk33/arex_research.jsonl]
+  output_dir: checkpoints/A5_runner_up_teacher

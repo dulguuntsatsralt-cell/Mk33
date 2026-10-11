@@ -1,0 +1,5 @@
+inherit: ../default.yaml
+name: A1_palm_lambda_025
+description: "A1: PALM with lambda = 0.25."
+palm: {lam: 0.25}
+sft: {output_dir: checkpoints/A1_palm_lambda_025}

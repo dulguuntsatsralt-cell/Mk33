@@ -1,0 +1,5 @@
+inherit: ../default.yaml
+name: A4_sigma_only
+description: "A4: 3-sigma term only."
+filter: {use_rel_margin: false}
+sft: {output_dir: checkpoints/A4_sigma_only}
