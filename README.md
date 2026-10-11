@@ -11,7 +11,7 @@
 
 Training recipe and reference code for agents that improve their own solutions over many hours.
 
-**Paper:** [Mk33: A Fully Specified Recipe and Reference Implementation for Training Long-Horizon Self-Improving Agents](paper/main.pdf) · Dulguun Enkhtsatsral, 2026
+**Paper:** [Mk33: A Fully Specified Recipe and Reference Implementation for Training Long-Horizon Self-Improving Agents](paper/main.pdf) · [Dulguun Enkhtsatsral](https://dulguuntsatsralt.github.io), 2026
 
 > **Status.** Research code. The pipeline, scaffold, and loss masking are implemented and tested. No model has been
 > trained with it yet, so this repository reports no training results. The values in
