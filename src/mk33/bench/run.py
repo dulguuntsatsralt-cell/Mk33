@@ -8,6 +8,16 @@ Comparing ``rlc`` with ``truncate`` at a fixed model is an inference-time versio
 ablation A2 (``A2_rlc_test_only``): it asks whether the round ledger helps an
 untrained model keep improving once old turns no longer fit.
 
+The memory study adds two more families of modes (docs/mk33/MEMORY.md):
+
+    retrieve, rlc+retrieve   dropped turns go into a retrieval memory (text level)
+    kv:<policy>              the agent keeps its full text history and the local model's
+                             KV cache is compressed to ``kv_budget`` tokens instead
+                             (model level; needs ``backend="hf"``)
+
+Setting ``window`` and ``kv_budget`` to the same number compares the two levels at an
+equal KV-cache memory budget.
+
 Runs are resumable: a run whose ``result.json`` exists is skipped unless ``force``.
 """
 
@@ -30,7 +40,8 @@ from ..envs.scorer import IsolatedScorer
 from ..envs.spec import EnvSpec
 from ..llm import ChatClient
 from ..metrics import process_metrics
-from ..scaffold import SYSTEM_PROMPT, Agent, AgentConfig, Budget, LocalSandbox, RLCConfig, ToolConfig, ToolExecutor
+from ..scaffold import (MODES, SYSTEM_PROMPT, Agent, AgentConfig, Budget, LocalSandbox, RLCConfig, ToolConfig,
+                        ToolExecutor)
 from ..trajectory import Trajectory
 
 BENCH_TOOLS = ["bash", "read_file", "edit_file", "run_job", "wait_job", "submit"]
@@ -52,7 +63,52 @@ class BenchConfig:
     workers: int = 4
     force: bool = False
     no_think: bool = False
-    rpm: float = 0.0  # pace model calls to stay under a free tier's requests-per-minute limit  # append Qwen3's /no_think switch to the system prompt (local CPU runs)
+    rpm: float = 0.0  # pace model calls to stay under a free tier's requests-per-minute limit
+    # Retrieval memory (modes "retrieve", "rlc+retrieve")
+    retrieve_k: int = 4
+    retrieve_budget: int = 2_000
+    retrieve_item_chars: int = 1_200
+    retrieve_refresh: str = "round"
+    retriever: str = "bm25"
+    embed_model: str = ""
+    embed_base_url: str = ""
+    # KV-cache compression (modes "kv:<policy>", local models only)
+    kv_budget: int = 0  # tokens kept per layer and head; 0 = same as window
+    kv_sinks: int = 4
+    kv_recent: int = 256
+    kv_text_window: int = 32_000  # text context limit for kv modes (the model's own limit)
+
+    def __post_init__(self):
+        for m in self.modes:
+            parse_mode(m)
+
+    def rlc_for(self, mode: str) -> RLCConfig:
+        ctx_mode, kv_policy = parse_mode(mode)
+        return RLCConfig(
+            window=self.kv_text_window if kv_policy else self.window, theta=self.theta,
+            keep_rounds=self.keep_rounds, ledger_cap=self.ledger_cap, mode=ctx_mode,
+            retrieve_k=self.retrieve_k, retrieve_budget=self.retrieve_budget,
+            retrieve_item_chars=self.retrieve_item_chars, retrieve_refresh=self.retrieve_refresh,
+            retriever=self.retriever, embed_model=self.embed_model, embed_base_url=self.embed_base_url,
+        )
+
+
+def parse_mode(mode: str) -> tuple[str, str | None]:
+    """'rlc' -> ('rlc', None); 'kv:keynorm' -> ('truncate', 'keynorm').
+
+    A kv mode keeps the whole text history (only cut at ``kv_text_window``, the model's
+    limit) and lets the KV-cache policy do the forgetting.
+    """
+    if mode.startswith("kv:"):
+        from ..kv.names import POLICIES  # no torch import
+
+        policy = mode[3:]
+        if policy not in POLICIES:
+            raise ValueError(f"unknown KV policy in mode {mode!r}; choose from {', '.join(POLICIES)}")
+        return "truncate", policy
+    if mode not in MODES:
+        raise ValueError(f"unknown mode {mode!r}; choose from {', '.join(MODES)} or kv:<policy>")
+    return mode, None
 
 
 class RetryingClient:
@@ -161,8 +217,7 @@ def run_one(env: EnvSpec, mode: str, rep: int, cfg: BenchConfig, client: ChatCli
     ex = ToolExecutor(env_run, sandbox, IsolatedScorer(env_run), tools)
     agent_cfg = AgentConfig(
         budget=Budget(max_tool_calls=cfg.max_tool_calls, max_wall_s=cfg.max_wall_s, max_rounds=cfg.max_rounds),
-        rlc=RLCConfig(window=cfg.window, theta=cfg.theta, keep_rounds=cfg.keep_rounds,
-                      ledger_cap=cfg.ledger_cap, mode=mode),
+        rlc=cfg.rlc_for(mode),
         system_prompt=SYSTEM_PROMPT + ("\n\n/no_think" if cfg.no_think else ""),
     )
     row: dict[str, Any] = {"env_id": env.env_id, "task": env.metadata.get("task"), "mode": mode, "rep": rep,
@@ -179,6 +234,10 @@ def run_one(env: EnvSpec, mode: str, rep: int, cfg: BenchConfig, client: ChatCli
         sandbox.kill_all()
     row["wall_s"] = round(time.time() - t0, 1)
     row["llm_calls"], row["llm_retries"] = retrying.calls, retrying.retries
+    if getattr(client, "stats", None):  # local model: KV-cache memory and speed
+        from ..kv.client import summarize_stats
+
+        row.update(summarize_stats(client.stats))
 
     if traj is not None:
         traj.metadata.update({"model": model, "mode": mode, "rep": rep, "bench": asdict(cfg)})
@@ -221,7 +280,8 @@ def run_grid(envs: list[EnvSpec], cfg: BenchConfig, client_factory: Callable[[],
 
     def work(job):
         e, m, r = job
-        return run_one(e, m, r, cfg, client_factory(), out, model)
+        client = client_factory(m) if getattr(client_factory, "takes_mode", False) else client_factory()
+        return run_one(e, m, r, cfg, client, out, model)
 
     with ThreadPoolExecutor(max_workers=max(1, cfg.workers)) as pool:
         futs = {pool.submit(work, j): j for j in jobs}

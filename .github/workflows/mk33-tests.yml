@@ -3,9 +3,9 @@ name: Mk33 tests
 on:
   workflow_dispatch:
   push:
-    paths: ["src/mk33/**", "tests/mk33/**", "configs/mk33/**", "pyproject.toml", ".github/workflows/mk33-tests.yml"]
+    paths: ["src/mk33/**", "tests/mk33/**", "configs/mk33/**", "scripts/mk33/**", "pyproject.toml", ".github/workflows/mk33-tests.yml"]
   pull_request:
-    paths: ["src/mk33/**", "tests/mk33/**", "configs/mk33/**", "pyproject.toml", ".github/workflows/mk33-tests.yml"]
+    paths: ["src/mk33/**", "tests/mk33/**", "configs/mk33/**", "scripts/mk33/**", "pyproject.toml", ".github/workflows/mk33-tests.yml"]
 
 jobs:
   test:
@@ -20,3 +20,19 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e '.[dev]'
       - run: python -m pytest tests/mk33 -q
+
+  kv:
+    # KV-cache compression and the Triton kernels, on CPU: a tiny random model (no
+    # downloads) and Triton's interpreter instead of a GPU.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e '.[dev]' 'transformers>=4.46' triton
+      - run: python -m pytest tests/mk33/test_kv.py tests/mk33/test_bench_memory.py -q
+      - run: python -m pytest tests/mk33/test_kv_triton.py -q
+        env:
+          TRITON_INTERPRET: "1"

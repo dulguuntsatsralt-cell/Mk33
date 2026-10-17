@@ -233,15 +233,34 @@ def cmd_bench_run(a) -> int:
     from .bench import BenchConfig, SubmitOnlyClient, run_grid, write_report
     from .envs import EnvSpec
 
+    modes = a.modes.split(",")
+    kv_modes = [m for m in modes if m.startswith("kv:")]
+    if kv_modes and a.backend != "hf":
+        raise SystemExit(f"{', '.join(kv_modes)} compress a local model's KV cache; add --backend hf --model <hf id>")
     envs = [EnvSpec.from_dict(d) for d in _read_jsonl(a.envs)]
     if a.tasks:
         keep = set(a.tasks.split(","))
         envs = [e for e in envs if e.metadata.get("task") in keep]
-    cfg = BenchConfig(modes=a.modes.split(","), repeats=a.repeats, max_tool_calls=a.max_tool_calls,
+    workers = 1 if a.backend == "hf" else a.workers  # one GPU, one shared model
+    cfg = BenchConfig(modes=modes, repeats=a.repeats, max_tool_calls=a.max_tool_calls,
                       max_rounds=a.max_rounds, max_wall_s=a.max_minutes * 60, window=a.window,
-                      workers=a.workers, force=a.force, no_think=a.no_think, rpm=a.rpm)
+                      workers=workers, force=a.force, no_think=a.no_think, rpm=a.rpm,
+                      retrieve_k=a.retrieve_k, retrieve_budget=a.retrieve_budget,
+                      retrieve_refresh=a.retrieve_refresh, retriever=a.retriever,
+                      embed_model=a.embed_model or "", embed_base_url=a.embed_base_url or "",
+                      kv_budget=a.kv_budget or a.window, kv_sinks=a.kv_sinks, kv_recent=a.kv_recent,
+                      kv_text_window=a.kv_text_window)
     if a.dry_run:
         model, factory = "dry-run", SubmitOnlyClient
+    elif a.backend == "hf":
+        if not a.model:
+            raise SystemExit("--model <hugging face id or path> is required with --backend hf")
+        from .kv.client import HFClientFactory
+
+        model = a.model
+        factory = HFClientFactory(a.model, budget=a.kv_budget or a.window, sinks=a.kv_sinks, recent=a.kv_recent,
+                                  chunk=a.kv_chunk, temperature=a.temperature, max_tokens=a.max_tokens,
+                                  device=a.device, dtype=a.dtype)
     else:
         if not a.model:
             raise SystemExit("--model is required unless --dry-run")
@@ -294,14 +313,31 @@ def main(argv: list[str] | None = None) -> int:
     add("bench-run", cmd_bench_run, envs={"default": "bench/envs/envs.jsonl"}, out={"default": "bench/results"},
         model={}, base_url={}, api_key_env={"default": "MODEL_API_KEY"},
         temperature={"type": float, "default": 0.7}, max_tokens={"type": int, "default": 4096},
-        modes={"default": "rlc,truncate"}, repeats={"type": int, "default": 3}, tasks={},
+        modes={"default": "rlc,truncate",
+               "help": "comma-separated: rlc, truncate, retrieve, rlc+retrieve, none, kv:<policy> "
+                       "(policies: full, random, streaming, keynorm, h2o)"}, repeats={"type": int, "default": 3}, tasks={},
         max_rounds={"type": int, "default": 15}, max_tool_calls={"type": int, "default": 80},
         max_minutes={"type": float, "default": 45}, window={"type": int, "default": 24000},
         workers={"type": int, "default": 4}, force={"action": "store_true"},
         dry_run={"action": "store_true", "help": "no API calls; resubmits the baseline"},
         no_think={"action": "store_true", "help": "turn off Qwen3 thinking (/no_think); much faster on CPU"},
         timeout={"type": float, "default": 300.0, "help": "seconds before one model call is abandoned"},
-        rpm={"type": float, "default": 0.0, "help": "max model calls per minute (for free API tiers); 0 = no pacing"})
+        rpm={"type": float, "default": 0.0, "help": "max model calls per minute (for free API tiers); 0 = no pacing"},
+        backend={"default": "openai", "choices": ["openai", "hf"],
+                 "help": "openai: any OpenAI-compatible endpoint; hf: a local Hugging Face model (needed for kv: modes)"},
+        device={"help": "hf backend: cuda or cpu (default: cuda if available)"},
+        dtype={"default": "auto", "help": "hf backend: auto, bfloat16, float16 or float32"},
+        retrieve_k={"type": int, "default": 4, "help": "retrieve modes: items placed back per refresh"},
+        retrieve_budget={"type": int, "default": 2000, "help": "retrieve modes: tokens for the retrieved block"},
+        retrieve_refresh={"default": "round", "choices": ["round", "compaction"]},
+        retriever={"default": "bm25", "choices": ["bm25", "embed"]},
+        embed_model={"help": "retriever embed: model name at the embeddings endpoint"},
+        embed_base_url={"help": "retriever embed: OpenAI-compatible base URL (default: OpenAI)"},
+        kv_budget={"type": int, "default": 0, "help": "kv modes: cache tokens kept per layer/head (0 = --window)"},
+        kv_sinks={"type": int, "default": 4}, kv_recent={"type": int, "default": 256},
+        kv_chunk={"type": int, "default": 512, "help": "kv modes: prefill chunk size"},
+        kv_text_window={"type": int, "default": 32000,
+                        "help": "kv modes: text history limit (the model's context length)"})
     add("bench-report", cmd_bench_report, out={"default": "bench/results"})
 
     a = p.parse_args(argv)
