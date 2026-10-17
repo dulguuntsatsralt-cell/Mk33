@@ -74,6 +74,10 @@ Useful flags: `--tasks regression,sentiment` for a subset, `--repeats 5` for tig
 intervals, `--window 128000` to check that the modes agree when nothing needs
 compaction, `--modes rlc,truncate,none` (only with a large window).
 
+Memory study modes: `retrieve` and `rlc+retrieve` add retrieval memory over compacted turns
+(any model); `kv:full`, `kv:streaming`, `kv:keynorm`, `kv:h2o` and `kv:random` compress a
+local model's KV cache (`--backend hf`). See [MEMORY.md](MEMORY.md).
+
 ### Rate-limited and local endpoints
 
 | Flag | Default | Use |

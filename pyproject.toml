@@ -19,6 +19,7 @@ Repository = "https://github.com/dulguuntsatsralt-cell/Mk33"
 [project.optional-dependencies]
 mk33 = ["pyyaml", "openai"]
 mk33-train = ["pyyaml", "openai", "torch", "transformers>=4.46", "accelerate", "deepspeed"]
+mk33-kv = ["pyyaml", "openai", "torch", "transformers>=4.46", "triton; platform_system == 'Linux'"]
 dev = ["pyyaml", "pytest"]
 
 [project.scripts]
@@ -30,7 +31,7 @@ mk33 = "src/mk33"
 [tool.setuptools]
 packages = [
   "mk33", "mk33.envs", "mk33.scaffold", "mk33.palm",
-  "mk33.selection", "mk33.train", "mk33.metrics", "mk33.bench",
+  "mk33.selection", "mk33.train", "mk33.metrics", "mk33.bench", "mk33.kv",
 ]
 
 [tool.pytest.ini_options]

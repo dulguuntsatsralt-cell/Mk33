@@ -1,0 +1,142 @@
+# Memory for long-horizon agents: text-level vs KV-level forgetting
+
+A long improvement run outgrows any context window. Something has to be forgotten,
+and there are two places to do it:
+
+- **In the text**, before the model sees it: drop old turns (`truncate`), summarize them
+  into a ledger (`rlc`), or move them into a store and retrieve the relevant ones back
+  (`retrieve`, `rlc+retrieve`).
+- **In the model**, after it has read them: keep the full text history and compress the
+  model's KV cache to a fixed budget, choosing which tokens' keys and values to keep
+  (`kv:<policy>`).
+
+This study runs both on the same bench, the same model and the same budgets, and asks:
+at a fixed memory budget, which kind of forgetting lets an agent keep improving?
+
+## Modes
+
+| Mode | What the model sees | What is forgotten | Needs |
+| --- | --- | --- | --- |
+| `truncate` | recent turns | oldest turns, silently | any model |
+| `rlc` | ledger (one line per round) + recent rounds | details of old rounds | any model |
+| `retrieve` | recent turns + top-k old turns by relevance | old turns not retrieved this round | any model |
+| `rlc+retrieve` | ledger + recent rounds + top-k old turns | details not retrieved | any model |
+| `kv:full` | everything (up to the model's limit) | nothing | local model |
+| `kv:streaming` | everything, but the cache keeps sinks + most recent tokens | the middle | local model |
+| `kv:keynorm` | everything; cache keeps low-norm keys + sinks + recent | high-norm keys | local model |
+| `kv:h2o` | everything; cache keeps most-attended tokens + sinks + recent | rarely attended tokens | local model, eager attention |
+| `kv:random` | everything; cache keeps random tokens + sinks + recent | random tokens | local model |
+
+`kv:random` is the control: a policy that does not beat it has not shown it knows which
+tokens matter. `kv:full` is the ceiling at unlimited memory.
+
+**Equal-memory comparison.** A text-level mode with `--window W` holds about W tokens in
+the model's cache. A kv mode with `--kv-budget B` holds about B. Running both with
+`--window 8000 --kv-budget 8000` (the default sets the budget to the window) compares
+them at the same cache size, which is the point of the study.
+
+## Retrieval memory (`src/mk33/scaffold/memory.py`)
+
+- **What is stored.** Each turn that leaves the context becomes one item: the agent's
+  reasoning, its tool call, and the head and tail of the tool output (where commands
+  echo and where scores and tracebacks end up), capped at `--retrieve-item-chars`.
+- **Retriever.** BM25 over identifiers and numbers, using only the standard library, so
+  CPU runs need nothing extra. `--retriever embed --embed-model <name>` switches to
+  dense retrieval through any OpenAI-compatible `/embeddings` endpoint.
+- **Query.** The agent's last two turns, so retrieval follows what it is working on now.
+- **Budget.** At most `--retrieve-k` items and `--retrieve-budget` tokens. That budget is
+  reserved when compacting, so the context still fits the window.
+- **Refresh.** The retrieved block sits in the prefix, which Mk33 freezes between events
+  so the context only grows by appending. Changing it is therefore an event like a
+  compaction: it starts a new training window and invalidates the KV cache for
+  everything after the system prompt. With `--retrieve-refresh round` (default) this
+  happens at every new round; with `compaction` only when compacting. The trade-off
+  (fresher retrieval vs fewer cache invalidations) is measurable with the compaction
+  count in the report.
+- **Train/test consistency.** Retrieval runs inside `ContextBuilder`, which the training
+  replay also uses, so `mk33 build-sft` reproduces the retrieved contexts exactly. The
+  tests check this turn by turn, as they already did for `rlc`. Ablation config
+  `A8_rlc_retrieve` trains with it.
+
+## KV-cache compression (`src/mk33/kv/`)
+
+- **Where it runs.** `HFChatClient` is a drop-in `ChatClient` for a local Hugging Face
+  model. It formats messages and tool schemas with the model's own chat template and
+  parses Hermes/Qwen-style `<tool_call>` blocks. With `--backend hf`, every mode in a
+  grid (text-level ones too) runs on the same local model.
+- **Bounded cache.** The prompt is prefilled in chunks (`--kv-chunk`). After each chunk,
+  and every 64 tokens while decoding, the cache is compressed back to the budget. Peak
+  cache size is about `budget + chunk` tokens per layer, whatever the prompt length.
+- **Positions.** Cached keys already carry their rotary embedding, so evicting rows does
+  not disturb them; new tokens get their true positions via `position_ids` while
+  `cache_position` indexes the shorter cache. A test checks this exactly: after
+  eviction, the next token's logits equal a full forward pass in which that token is
+  masked from the evicted ones.
+- **Per head.** Each KV head keeps its own set of tokens (same count, different indices).
+- **Policies** (`policies.py`): sinks and recent tokens are always kept; the policy fills
+  the middle. `keynorm` needs no attention scores; `h2o` accumulates attention
+  probabilities over all queries so far, which needs eager attention (slower prefill,
+  more memory). `kv_quality.py` and the report show the cost.
+- **Triton kernels** (`triton_ops.py`): one fused kernel gathers the kept rows of K and V
+  in a single launch with arbitrary input strides; another computes key norms with
+  float32 accumulation without a float32 copy of the cache. Both are checked against
+  the PyTorch reference (bit-exact for the gather) on GPU or in Triton's CPU
+  interpreter. `scripts/mk33/bench_kv_kernels.py` measures time and bandwidth.
+- **Simplification.** Each model call prefills its prompt from scratch; there is no
+  cache reuse across calls. Prefill time is therefore reported per call, and compression
+  is applied as the prompt is read. Cross-call prefix caching under compression is a
+  natural next step.
+
+## Running it
+
+On a machine with an NVIDIA GPU (Colab: Runtime > Change runtime type > GPU).
+
+```bash
+git clone https://github.com/dulguuntsatsralt-cell/mk33 && cd mk33
+pip install -e '.[mk33-kv,dev]'
+python -m pytest tests/mk33 -q          # on a GPU this includes the Triton kernel tests
+
+# 1. Kernels: PyTorch vs Triton, time and bandwidth
+python scripts/mk33/bench_kv_kernels.py --out bench/kv_kernels.json
+
+# 2. Does the model's tool calling work with HFChatClient?
+python scripts/mk33/kv_quality.py --model Qwen/Qwen2.5-7B-Instruct --smoke
+
+# 3. Perplexity vs budget for every policy (minutes, no agent)
+python scripts/mk33/kv_quality.py --model Qwen/Qwen2.5-7B-Instruct --context 8192 \
+  --budgets 512,1024,2048,4096 --out bench/kv_quality.json
+
+# 4. The agent grid at an equal memory budget (start small to time it)
+mk33 bench-prepare --out bench/envs
+mk33 bench-run --backend hf --model Qwen/Qwen2.5-7B-Instruct --window 8000 \
+  --modes truncate,rlc,retrieve,rlc+retrieve,kv:full,kv:streaming,kv:keynorm,kv:random \
+  --tasks knapsack --repeats 1 --out bench/memory
+mk33 bench-report --out bench/memory
+```
+
+Text-level modes also run against any API model without a GPU:
+
+```bash
+mk33 bench-run --model <name> --base-url <url> --modes rlc,truncate,retrieve,rlc+retrieve --out bench/retrieval
+```
+
+**Choosing a model and GPU.** Qwen2.5-7B-Instruct in bfloat16 needs about 16 GB plus
+cache: an L4 (24 GB) or A100 works. On a T4 (16 GB, no fast bfloat16) use
+Qwen2.5-3B-Instruct with `--dtype float16`, keeping in mind that models around 3B often
+describe edits instead of calling tools (see BENCH.md). `kv:h2o` uses eager attention;
+lower `--kv-chunk` if prefill runs out of memory.
+
+## What to report
+
+1. `bench/memory/report.md`: per mode, best normalized score, best-so-far AUC, peak KV
+   cache, evicted share, prefill time; and paired bootstrap intervals for every pair of
+   modes. Only call a difference real when its interval excludes zero.
+2. `kv_quality.json`: perplexity gap to the full cache as a function of budget, per policy.
+3. `kv_kernels.json`: Triton vs PyTorch time and achieved bandwidth on your GPU.
+
+## Status
+
+Implemented and tested on CPU: retrieval modes, train/test consistency with retrieval,
+every KV policy, positional correctness after eviction, the bench and report wiring, and
+both Triton kernels (in Triton's interpreter). No GPU runs yet, so there are no results
+in this document. The kernels have not yet been timed on a GPU.

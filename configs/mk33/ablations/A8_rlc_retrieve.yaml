@@ -1,0 +1,9 @@
+inherit: ../default.yaml
+name: A8_rlc_retrieve
+description: >
+  A8: round ledger plus retrieval memory over compacted turns, at train and test time.
+  Tests whether letting the agent recover verbatim details of old rounds (commands,
+  error messages, scores) adds to what the one-line ledger keeps. Training windows are
+  rebuilt offline from the default trajectories, as in A2.
+rlc: {mode: rlc+retrieve, retrieve_k: 4, retrieve_budget: 8000, retrieve_item_chars: 4000}
+sft: {output_dir: checkpoints/A8_rlc_retrieve}

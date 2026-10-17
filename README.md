@@ -95,6 +95,22 @@ mk33 bench-report --out bench/results
 Free API tiers and local models are supported with `--rpm`, `--timeout`, `--max-tokens` and `--no-think`;
 see the guide for budgets.
 
+## Memory study: retrieval vs KV-cache compression
+
+When a run outgrows the context window, forgetting can happen in the text (truncate, the
+round ledger, or retrieval memory that puts relevant old turns back) or inside the model
+(keep the full history and compress the KV cache to a fixed budget). The bench compares
+both at an equal memory budget on the same local model. Retrieval works with any model;
+KV-cache policies (streaming, key-norm, H2O, random control) run on a local Hugging Face
+model, with Triton kernels for the eviction step. Design, commands and status:
+[docs/mk33/MEMORY.md](docs/mk33/MEMORY.md).
+
+```bash
+pip install -e '.[mk33-kv]'
+mk33 bench-run --backend hf --model Qwen/Qwen2.5-7B-Instruct --window 8000 \
+  --modes rlc,retrieve,kv:full,kv:keynorm,kv:random --out bench/memory
+```
+
 ## Key defaults
 
 | Setting | Value | Config key |
@@ -120,6 +136,7 @@ training data for each.
 | A5 | How much does the teacher model matter? | `A5_runner_up_teacher` |
 | A6 | How much of the gain is contamination? | `A6_no_decontam` |
 | A7 | Do gains come from iterating, or from more training data? | `A7_single_attempt` |
+| A8 | Does retrieving old turns add to the ledger? | `A8_rlc_retrieve` |
 
 ## Evaluation
 
@@ -132,6 +149,7 @@ AREX-2. It is maintained by its authors and is not included in this repository.
 ```text
 src/mk33/          the Mk33 package
 src/mk33/bench/    small CPU-only benchmark (environments, runner, report)
+src/mk33/kv/       KV-cache compression for local models (policies, Triton kernels, chat client)
 configs/mk33/      default config, DeepSpeed config, ablations
 scripts/mk33/      pipeline and ablation scripts
 tests/mk33/        unit and end-to-end tests

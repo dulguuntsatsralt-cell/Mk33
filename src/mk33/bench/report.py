@@ -26,6 +26,17 @@ METRICS = [
     ("compactions", "compactions"),
 ]
 
+# Recorded only for local models (HF backend); shown when any run has them.
+KV_METRICS = [
+    ("kv_peak_cache_tokens", "peak KV cache (tokens)"),
+    ("kv_peak_cache_mb", "peak KV cache (MB)"),
+    ("kv_evicted_share", "evicted token share"),
+    ("kv_mean_prompt_tokens", "prompt tokens per call"),
+    ("kv_mean_prefill_s", "prefill s per call"),
+    ("kv_mean_decode_tok_s", "decode tokens/s"),
+    ("kv_compress_share", "time in compression"),
+]
+
 
 def _mean_sd(xs: list[float]) -> str:
     xs = [x for x in xs if x is not None]
@@ -68,7 +79,7 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "n": len(rs),
             "beat_reference_share": sum(r["beat_reference"] for r in rs) / len(rs),
             "audit_pass_share": sum(r["audit_passed"] for r in rs) / len(rs),
-            **{k: [r.get(k) for r in rs] for k, _ in METRICS},
+            **{k: [r.get(k) for r in rs] for k, _ in METRICS + KV_METRICS},
         }
         n_rounds = max(len(r["curve"]) for r in rs)
         summary["curves"][m] = [statistics.mean(r["curve"][i] for r in rs if len(r["curve"]) > i)
@@ -107,6 +118,9 @@ def render_markdown(s: dict[str, Any], cfg: dict[str, Any] | None = None) -> str
     out.append("| --- |" + " --- |" * len(modes))
     for k, label in METRICS:
         out.append(f"| {label} | " + " | ".join(_mean_sd(s["per_mode"][m][k]) for m in modes) + " |")
+    for k, label in KV_METRICS:
+        if any(v is not None for m in modes for v in s["per_mode"][m].get(k, [])):
+            out.append(f"| {label} | " + " | ".join(_mean_sd(s["per_mode"][m].get(k, [])) for m in modes) + " |")
     out.append("| beat reference | " + " | ".join(f"{s['per_mode'][m]['beat_reference_share']:.0%}"
                                                   for m in modes) + " |")
     out.append("| audit passed | " + " | ".join(f"{s['per_mode'][m]['audit_pass_share']:.0%}"
