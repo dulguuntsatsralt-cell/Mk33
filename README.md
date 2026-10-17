@@ -113,6 +113,8 @@ next-token loss; and key-norm eviction beat random on Llama but lost to it on Qw
 key-norm kernel runs at about 80% of the T4's memory bandwidth. Reproduce in Colab:
 [`notebooks/`](notebooks/).
 
+<p align="center"><img src="docs/mk33/figures/vs_random.png" alt="Each memory method compared with random KV-cache eviction on Qwen2.5-3B and Llama-3.2-3B, with 95% intervals" width="760"></p>
+
 ```bash
 pip install -e '.[mk33-kv]'
 mk33 bench-run --backend hf --model Qwen/Qwen2.5-7B-Instruct --window 8000 \
