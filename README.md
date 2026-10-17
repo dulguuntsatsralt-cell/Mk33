@@ -7,6 +7,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-1700c7" alt="license: Apache-2.0"></a>
   <img src="https://img.shields.io/badge/python-3.10%2B-1700c7" alt="python 3.10+">
   <a href="paper/main.pdf"><img src="https://img.shields.io/badge/paper-PDF-1700c7" alt="paper PDF"></a>
+  <a href="https://colab.research.google.com/github/dulguuntsatsralt-cell/Mk33/blob/main/notebooks/mk33_rag_vs_kv.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open in Colab"></a>
 </p>
 
 Training recipe and reference code for agents that improve their own solutions over many hours.
@@ -105,6 +106,13 @@ KV-cache policies (streaming, key-norm, H2O, random control) run on a local Hugg
 model, with Triton kernels for the eviction step. Design, commands and status:
 [docs/mk33/MEMORY.md](docs/mk33/MEMORY.md).
 
+First results (Tesla T4; Qwen2.5-3B and Llama-3.2-3B; bootstrap 95% intervals): attention-based
+eviction (H2O) had the lowest loss in every setting and stayed within 0.05 to 0.07 nats of the full
+cache while keeping half the context; BM25 retrieval was never distinguishable from plain truncation on
+next-token loss; and key-norm eviction beat random on Llama but lost to it on Qwen. The Triton
+key-norm kernel runs at about 80% of the T4's memory bandwidth. Reproduce in Colab:
+[`notebooks/`](notebooks/).
+
 ```bash
 pip install -e '.[mk33-kv]'
 mk33 bench-run --backend hf --model Qwen/Qwen2.5-7B-Instruct --window 8000 \
@@ -150,6 +158,7 @@ AREX-2. It is maintained by its authors and is not included in this repository.
 src/mk33/          the Mk33 package
 src/mk33/bench/    small CPU-only benchmark (environments, runner, report)
 src/mk33/kv/       KV-cache compression for local models (policies, Triton kernels, chat client)
+notebooks/         Colab notebooks that reproduce the GPU results
 configs/mk33/      default config, DeepSpeed config, ablations
 scripts/mk33/      pipeline and ablation scripts
 tests/mk33/        unit and end-to-end tests

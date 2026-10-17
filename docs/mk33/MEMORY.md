@@ -220,18 +220,76 @@ python scripts/mk33/memory_quality.py --model unsloth/Llama-3.2-3B-Instruct --dt
 Hugging Face token. Two model families test whether a finding (for example key-norm
 losing to random on Qwen2.5) is about the method or about one model.
 
+### Results: two models, 8 windows (Tesla T4, October 2026)
+
+Qwen2.5-3B-Instruct and Llama-3.2-3B-Instruct, float16, 8 windows of 8,192 context +
+1,024 continuation tokens from this repository, `kv:random` averaged over 2 seeds.
+Loss increase over the full cache in nats (lower is better), mean over windows. Raw
+rows and summaries: [Qwen](results/t4-memq-qwen2.5-3b/), [Llama](results/t4-memq-llama3.2-3b/).
+Notebook: [`notebooks/mk33_rag_vs_kv.ipynb`](../../notebooks/mk33_rag_vs_kv.ipynb).
+
+| budget | model | kv:h2o | kv:keynorm | kv:random | kv:streaming | text:recent | text:retrieve (RAG) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1,024 | Qwen | **+0.203** | +0.304 | +0.259 | +0.284 | +0.288 | +0.288 |
+| 1,024 | Llama | **+0.265** | +0.376 | +0.456 | +0.470 | +0.291 | +0.327 |
+| 2,048 | Qwen | **+0.120** | +0.230 | +0.191 | +0.210 | +0.206 | +0.222 |
+| 2,048 | Llama | **+0.156** | +0.262 | +0.349 | +0.363 | +0.196 | +0.242 |
+| 4,096 | Qwen | **+0.049** | +0.104 | +0.079 | +0.141 | +0.133 | +0.125 |
+| 4,096 | Llama | **+0.068** | +0.103 | +0.144 | +0.262 | +0.131 | +0.122 |
+
+Paired comparisons, bootstrap 95% intervals over windows ("better" or "worse" only when
+the interval excludes zero):
+
+| comparison | Qwen 1K / 2K / 4K | Llama 1K / 2K / 4K |
+| --- | --- | --- |
+| H2O vs random | unclear / better / better | better / better / better |
+| H2O vs RAG | better / better / better | unclear / better / better |
+| H2O vs truncation | better / better / better | unclear / unclear / unclear |
+| RAG vs truncation | unclear / unclear / unclear | unclear / unclear / unclear |
+| key-norm vs random | worse / worse / worse | better / better / unclear |
+| streaming vs random | worse / unclear / unclear | unclear / unclear / worse |
+
+What the data supports:
+
+1. **Attention-based KV eviction (H2O) is the most reliable method.** It has the lowest
+   loss in every cell, beats random in 5 of 6 comparisons and RAG in 5 of 6, and is
+   never significantly worse than anything. Keeping half the context (4,096 of 8,192
+   tokens; 5,120 of 9,216 cache tokens with the continuation) it stays within 0.05 to
+   0.07 nats of the full cache.
+2. **BM25 retrieval did not beat plain truncation** in any of the 6 comparisons, on
+   either model. For predicting the continuation of code and LaTeX, the most recent text
+   is as useful as keyword-matched older text. This is a statement about this task:
+   an agent that needs one specific old fact (an error from round 2) is the case RAG
+   is designed for, and the agent bench is still the test for that.
+3. **Key-norm eviction depends on the model.** It is worse than random at every budget
+   on Qwen2.5 and better than random at 1K and 2K on Llama 3.2, the family it was
+   originally reported on. A heuristic validated on one model family should be
+   re-checked before use on another. Why it fails on Qwen2.5 is not established here;
+   Qwen2.5's biased query/key projections are one candidate.
+4. **Recency alone is weak inside the cache.** Streaming never beats random. Random
+   KV eviction itself is much worse on Llama than on Qwen, so whether a KV method beats
+   a text method depends on the policy and the model; only H2O does so consistently.
+5. **Equal memory is not equal compute.** Text methods prefill only `budget` tokens and
+   ran about 3 times faster per measurement (1.6 to 1.8 s) than KV methods, which read
+   the whole context (4.4 to 4.9 s; H2O 7.6 to 8.2 s with eager attention). H2O's
+   quality advantage costs roughly 4.5 times the compute of RAG at the same memory.
+
+Limits: two 3B models, one corpus (this repository), 8 windows, 2 seeds for random,
+next-token loss rather than task success. Intervals over 8 windows are wide; several
+"unclear" cells could resolve with more windows.
+
 ## Status
 
 Implemented and tested on CPU and on a T4 GPU: retrieval modes, train/test consistency
 with retrieval, every KV policy, positional correctness after eviction, the bench and
-report wiring, and both Triton kernels. Kernel timings and perplexity results above.
-The agent bench has not yet produced a usable comparison. A first pilot (Qwen2.5-3B,
-knapsack, `rlc`, 8 rounds, about 6 minutes on the T4) shows the pipeline works end to
-end: 10 of 11 replies parsed as tool calls and every submission was scored. But the model
-never called `edit_file`. It described a greedy algorithm, then dynamic programming,
-then a genetic algorithm in its submit hypotheses, and resubmitted the unchanged baseline
-each time (the ledger records "no changes" for all 8 rounds). This is the failure noted
-in BENCH.md for models around 3B. The context also peaked at 5.1K tokens, below the 8K
-window, so no compaction or eviction happened and the run could not have separated the
-memory strategies anyway. The agent comparison needs a model that edits code reliably
-(7B or larger) and runs long enough to outgrow the window.
+report wiring, both Triton kernels, and the RAG vs KV comparison. Measured: kernel
+timings, perplexity vs budget, and RAG vs KV eviction on two model families with
+confidence intervals (above).
+
+Not yet measured: the agent bench. A first pilot with Qwen2.5-3B on knapsack shows the
+pipeline works end to end (10 of 11 replies parsed as tool calls, every submission
+scored), but the model never called `edit_file`: it described a greedy algorithm, then
+dynamic programming, then a genetic algorithm in its submit hypotheses, and resubmitted
+the unchanged baseline each time. The context peaked at 5.1K tokens, below the 8K window,
+so no memory strategy was triggered. The agent comparison needs a model that edits code
+reliably (7B or larger) and runs long enough to outgrow the window.
