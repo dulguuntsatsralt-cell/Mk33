@@ -134,9 +134,75 @@ lower `--kv-chunk` if prefill runs out of memory.
 2. `kv_quality.json`: perplexity gap to the full cache as a function of budget, per policy.
 3. `kv_kernels.json`: Triton vs PyTorch time and achieved bandwidth on your GPU.
 
+## First results (Tesla T4, Qwen2.5-3B-Instruct, October 2026)
+
+One free Colab T4 session. Raw numbers: [results/t4-qwen2.5-3b/](results/t4-qwen2.5-3b/).
+All tests passed on the GPU, including the Triton kernel tests on real hardware.
+
+### Kernels
+
+float16, batch 1, 8 KV heads, head dim 128, keeping 25% of rows. The T4's peak memory
+bandwidth is 320 GB/s.
+
+| tokens | gather: PyTorch / Triton (ms) | speedup | Triton GB/s | key norm: PyTorch / Triton (ms) | speedup | Triton GB/s |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2,048 | 0.054 / 0.128 | 0.43x | 33 | 0.145 / 0.129 | 1.1x | 33 |
+| 8,192 | 0.180 / 0.122 | 1.5x | 139 | 0.512 / 0.075 | 6.9x | 228 |
+| 32,768 | 0.582 / 0.304 | 1.9x | 223 | 1.459 / 0.267 | 5.5x | 256 |
+| 131,072 | 1.886 / 1.195 | 1.6x | 226 | 5.646 / 1.050 | 5.4x | 260 |
+
+- The key-norm kernel reaches about 80% of peak bandwidth and is 5 to 7 times faster
+  than `k.float().norm(-1)`, which first writes a float32 copy of the keys.
+- The fused gather is 1.5 to 1.9 times faster than two `torch.gather` calls from 8K
+  tokens up, at about 70% of peak.
+- At 2K tokens both kernels are dominated by a fixed launch cost of about 0.12 ms, and
+  the gather is slower than PyTorch. For short caches the PyTorch path is the better
+  default; `backend="auto"` does not yet switch on size.
+
+### Perplexity vs cache budget
+
+Next-token loss (NLL, nats) on 1,024 tokens of the paper and scaffold code, given the
+8,192 tokens before them. Sinks 4, recent 256. Full cache: NLL 1.641, 324 MB peak.
+Lower "vs full" is better.
+
+| budget | random | streaming | keynorm | h2o |
+| --- | --- | --- | --- | --- |
+| 512 | +0.596 | +0.615 | +0.651 | +0.626 |
+| 1,024 | +0.475 | +0.525 | +0.595 | +0.420 |
+| 2,048 | +0.309 | +0.334 | +0.472 | +0.228 |
+| 4,096 | +0.127 | +0.268 | +0.224 | +0.106 |
+
+- **Random eviction is a strong control.** It beats streaming and key-norm at every
+  budget. Keeping a spread of tokens from the whole document matters more here than
+  keeping only the recent ones.
+- **Only H2O beats random**, and only from 1,024 tokens up: by 0.055, 0.081 and 0.021
+  nats. At 4,096 tokens it keeps the loss within 0.11 nats of the full cache with
+  about half the memory.
+- **Key-norm is worse than random at every budget on this model.** The low-norm
+  heuristic was reported on other model families; Qwen2.5's attention uses biased
+  query/key projections, which may change how key norm relates to attention. This
+  needs checking on a second model family before drawing a conclusion.
+- H2O ran with 128-token chunks (eager attention stores every layer's scores) and the
+  others with 512, so its lower peak memory in the raw files comes from the chunk size,
+  not the policy. Its time includes eager attention.
+
+**Limits.** One model, one document, one continuation, one random seed, no confidence
+intervals. Differences of a few hundredths of a nat (for example H2O vs random at
+4,096) may not survive repeats. Next: several documents and seeds with bootstrap
+intervals, and a second model family (Llama 3.2 3B).
+
 ## Status
 
-Implemented and tested on CPU: retrieval modes, train/test consistency with retrieval,
-every KV policy, positional correctness after eviction, the bench and report wiring, and
-both Triton kernels (in Triton's interpreter). No GPU runs yet, so there are no results
-in this document. The kernels have not yet been timed on a GPU.
+Implemented and tested on CPU and on a T4 GPU: retrieval modes, train/test consistency
+with retrieval, every KV policy, positional correctness after eviction, the bench and
+report wiring, and both Triton kernels. Kernel timings and perplexity results above.
+The agent bench has not yet produced a usable comparison. A first pilot (Qwen2.5-3B,
+knapsack, `rlc`, 8 rounds, about 6 minutes on the T4) shows the pipeline works end to
+end: 10 of 11 replies parsed as tool calls and every submission was scored. But the model
+never called `edit_file`. It described a greedy algorithm, then dynamic programming,
+then a genetic algorithm in its submit hypotheses, and resubmitted the unchanged baseline
+each time (the ledger records "no changes" for all 8 rounds). This is the failure noted
+in BENCH.md for models around 3B. The context also peaked at 5.1K tokens, below the 8K
+window, so no compaction or eviction happened and the run could not have separated the
+memory strategies anyway. The agent comparison needs a model that edits code reliably
+(7B or larger) and runs long enough to outgrow the window.

@@ -1,0 +1,60 @@
+{
+  "model": "Qwen/Qwen2.5-3B-Instruct",
+  "args": {
+    "model": "Qwen/Qwen2.5-3B-Instruct",
+    "smoke": false,
+    "text": null,
+    "context": 8192,
+    "continuation": 1024,
+    "policies": "full,h2o",
+    "budgets": "512,1024,2048,4096",
+    "sinks": 4,
+    "recent": 256,
+    "chunk": 128,
+    "device": null,
+    "dtype": "float16",
+    "out": "results/kv_quality_h2o.json"
+  },
+  "rows": [
+    {
+      "policy": "full",
+      "budget": null,
+      "nll": 1.641420066356659,
+      "ppl": 5.162495395410888,
+      "peak_cache_mb": 324.0,
+      "seconds": 8.437972784042358
+    },
+    {
+      "policy": "h2o",
+      "budget": 512,
+      "nll": 2.267293944954872,
+      "ppl": 9.653243230558607,
+      "peak_cache_mb": 22.5,
+      "seconds": 6.884158134460449
+    },
+    {
+      "policy": "h2o",
+      "budget": 1024,
+      "nll": 2.061280868947506,
+      "ppl": 7.8560259083085215,
+      "peak_cache_mb": 40.5,
+      "seconds": 6.462514638900757
+    },
+    {
+      "policy": "h2o",
+      "budget": 2048,
+      "nll": 1.8698577880859375,
+      "ppl": 6.487373751844048,
+      "peak_cache_mb": 76.5,
+      "seconds": 7.487487316131592
+    },
+    {
+      "policy": "h2o",
+      "budget": 4096,
+      "nll": 1.7469538301229477,
+      "ppl": 5.737099850503858,
+      "peak_cache_mb": 148.5,
+      "seconds": 9.21832013130188
+    }
+  ]
+}

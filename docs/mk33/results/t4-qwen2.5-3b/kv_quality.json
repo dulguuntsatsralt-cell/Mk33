@@ -1,0 +1,124 @@
+{
+  "model": "Qwen/Qwen2.5-3B-Instruct",
+  "args": {
+    "model": "Qwen/Qwen2.5-3B-Instruct",
+    "smoke": false,
+    "text": null,
+    "context": 8192,
+    "continuation": 1024,
+    "policies": "full,random,streaming,keynorm",
+    "budgets": "512,1024,2048,4096",
+    "sinks": 4,
+    "recent": 256,
+    "chunk": 512,
+    "device": null,
+    "dtype": "float16",
+    "out": "results/kv_quality.json"
+  },
+  "rows": [
+    {
+      "policy": "full",
+      "budget": null,
+      "nll": 1.6413867473602295,
+      "ppl": 5.162323389110795,
+      "peak_cache_mb": 324.0,
+      "seconds": 6.058046817779541
+    },
+    {
+      "policy": "random",
+      "budget": 512,
+      "nll": 2.2376139163970947,
+      "ppl": 9.370944732398407,
+      "peak_cache_mb": 36.0,
+      "seconds": 4.892469644546509
+    },
+    {
+      "policy": "random",
+      "budget": 1024,
+      "nll": 2.116199254989624,
+      "ppl": 8.29953305668789,
+      "peak_cache_mb": 54.0,
+      "seconds": 3.7600769996643066
+    },
+    {
+      "policy": "random",
+      "budget": 2048,
+      "nll": 1.9498605728149414,
+      "ppl": 7.027707658780733,
+      "peak_cache_mb": 90.0,
+      "seconds": 4.051964521408081
+    },
+    {
+      "policy": "random",
+      "budget": 4096,
+      "nll": 1.7686526775360107,
+      "ppl": 5.86294875498866,
+      "peak_cache_mb": 162.0,
+      "seconds": 4.503207445144653
+    },
+    {
+      "policy": "streaming",
+      "budget": 512,
+      "nll": 2.256394863128662,
+      "ppl": 9.548603019659593,
+      "peak_cache_mb": 36.0,
+      "seconds": 3.6118459701538086
+    },
+    {
+      "policy": "streaming",
+      "budget": 1024,
+      "nll": 2.16640305519104,
+      "ppl": 8.726837565946795,
+      "peak_cache_mb": 54.0,
+      "seconds": 3.803415060043335
+    },
+    {
+      "policy": "streaming",
+      "budget": 2048,
+      "nll": 1.9752196073532104,
+      "ppl": 7.208202454279186,
+      "peak_cache_mb": 90.0,
+      "seconds": 4.10207986831665
+    },
+    {
+      "policy": "streaming",
+      "budget": 4096,
+      "nll": 1.9095276594161987,
+      "ppl": 6.749899793833188,
+      "peak_cache_mb": 162.0,
+      "seconds": 4.589481592178345
+    },
+    {
+      "policy": "keynorm",
+      "budget": 512,
+      "nll": 2.292433500289917,
+      "ppl": 9.898997607929179,
+      "peak_cache_mb": 36.0,
+      "seconds": 3.9035303592681885
+    },
+    {
+      "policy": "keynorm",
+      "budget": 1024,
+      "nll": 2.2366504669189453,
+      "ppl": 9.361920648408756,
+      "peak_cache_mb": 54.0,
+      "seconds": 4.075721263885498
+    },
+    {
+      "policy": "keynorm",
+      "budget": 2048,
+      "nll": 2.1136109828948975,
+      "ppl": 8.27807938282748,
+      "peak_cache_mb": 90.0,
+      "seconds": 4.377459764480591
+    },
+    {
+      "policy": "keynorm",
+      "budget": 4096,
+      "nll": 1.8655760288238525,
+      "ppl": 6.459655762421664,
+      "peak_cache_mb": 162.0,
+      "seconds": 4.8628575801849365
+    }
+  ]
+}
