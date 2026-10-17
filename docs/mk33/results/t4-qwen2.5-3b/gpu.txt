@@ -1,0 +1,2 @@
+name, memory.total [MiB], driver_version
+Tesla T4, 15360 MiB, 580.82.07

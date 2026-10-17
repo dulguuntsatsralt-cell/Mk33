@@ -185,14 +185,19 @@ class CompressedGenerator:
 
 
     @torch.no_grad()
-    def continuation_nll(self, ids: torch.Tensor, context: int) -> tuple[float, KVStats]:
+    def continuation_nll(self, ids: torch.Tensor, context: int,
+                         compress_continuation: bool = True) -> tuple[float, KVStats]:
         """Mean negative log-likelihood of ``ids[context:]`` given everything before it.
 
         The context is prefilled under the policy, then the continuation is scored in
-        chunks with the cache compressed between chunks, exactly as during generation.
+        chunks. With ``compress_continuation`` the cache is compressed between chunks,
+        exactly as during generation; without it the continuation is appended in full,
+        so the cache ends at ``budget + continuation`` tokens, the same memory a text-level
+        method uses when it shortens the context to ``budget`` tokens.
         With ``KVPolicy("full")`` this equals the model's ordinary loss on the continuation.
         """
         ids = ids.to(self.device)
+        self._gen.manual_seed(self.policy.seed)  # random eviction is reproducible per seed
         logits, stats = self.prefill(ids[:, :context])
         acc, total, count = self._acc, 0.0, 0
         rest = ids[:, context:]
@@ -205,7 +210,8 @@ class CompressedGenerator:
             total += torch.nn.functional.cross_entropy(preds[0], piece[0], reduction="sum").item()
             count += piece.shape[1]
             logits = out.logits[:, -1]
-            acc = self._compress(acc, stats, self.policy.budget)
+            if compress_continuation:
+                acc = self._compress(acc, stats, self.policy.budget)
         return total / max(1, count), stats
 
 
