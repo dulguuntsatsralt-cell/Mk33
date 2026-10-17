@@ -151,6 +151,8 @@ bandwidth is 320 GB/s.
 | 32,768 | 0.582 / 0.304 | 1.9x | 223 | 1.459 / 0.267 | 5.5x | 256 |
 | 131,072 | 1.886 / 1.195 | 1.6x | 226 | 5.646 / 1.050 | 5.4x | 260 |
 
+![Kernel bandwidth, PyTorch vs Triton](figures/kernel_bandwidth.png)
+
 - The key-norm kernel reaches about 80% of peak bandwidth and is 5 to 7 times faster
   than `k.float().norm(-1)`, which first writes a float32 copy of the keys.
 - The fused gather is 1.5 to 1.9 times faster than two `torch.gather` calls from 8K
@@ -237,6 +239,10 @@ Notebook: [`notebooks/mk33_rag_vs_kv.ipynb`](../../notebooks/mk33_rag_vs_kv.ipyn
 | 4,096 | Qwen | **+0.049** | +0.104 | +0.079 | +0.141 | +0.133 | +0.125 |
 | 4,096 | Llama | **+0.068** | +0.103 | +0.144 | +0.262 | +0.131 | +0.122 |
 
+![Loss increase by method and budget](figures/loss_vs_budget.png)
+
+![Paired difference against random eviction](figures/vs_random.png)
+
 Paired comparisons, bootstrap 95% intervals over windows ("better" or "worse" only when
 the interval excludes zero):
 
@@ -274,9 +280,44 @@ What the data supports:
    the whole context (4.4 to 4.9 s; H2O 7.6 to 8.2 s with eager attention). H2O's
    quality advantage costs roughly 4.5 times the compute of RAG at the same memory.
 
+![Quality vs compute at equal memory](figures/quality_vs_compute.png)
+
 Limits: two 3B models, one corpus (this repository), 8 windows, 2 seeds for random,
 next-token loss rather than task success. Intervals over 8 windows are wide; several
 "unclear" cells could resolve with more windows.
+
+## Related work
+
+The methods compared here are published; this study re-implements them inside Mk33
+and compares them under one equal-memory protocol.
+
+- **Eviction policies.** Streaming keeps attention sinks and recent tokens
+  (StreamingLLM, Xiao et al., 2023); H2O keeps "heavy hitter" tokens by accumulated
+  attention (Zhang et al., 2023); key-norm keeps low-norm keys (Devoto et al., 2024).
+  NVIDIA's [kvpress](https://github.com/NVIDIA/kvpress) implements these and many
+  more for Hugging Face models and is the natural reference implementation to check
+  numbers against.
+- **Where compression breaks.** [The Pitfalls of KV Cache Compression](https://arxiv.org/abs/2510.00231)
+  and [How Query Visibility Changes KV-Cache Compression Rankings](https://arxiv.org/abs/2607.11942)
+  study failure cases and how method rankings shift with the evaluation setup. The
+  key-norm reversal between Qwen2.5 and Llama 3.2 found here should be read alongside
+  them before it is called new.
+- **RAG vs KV compression.** [Beyond RAG: Task-aware KV cache compression](https://arxiv.org/abs/2503.04973)
+  compares retrieval with KV compression on long-context benchmarks using
+  Llama-3.1-8B and Qwen2.5-7B. They find compression ahead on broad, multi-hop
+  questions and RAG still effective for narrow ones. The result here (retrieval no
+  better than truncation on next-token loss) is consistent with that split: predicting
+  a continuation is a broad task.
+- **KV eviction for agents.** [MemDecay](https://huggingface.co/papers/2607.10582)
+  evicts agent KV caches by the role of each region (system prompt, plan, tool output)
+  and compares against random, streaming and H2O, the same cache-level baselines used
+  here. It does not compare against text-level context management.
+
+What this study adds is the combination: retrieval memory inside a self-improving
+agent's context builder, with training windows that reproduce the retrieved context
+exactly; text-level and KV-level forgetting under strictly equal cache size; a random
+eviction control with paired bootstrap intervals; and fused Triton kernels for the
+eviction step, all reproducible on a free T4.
 
 ## Status
 
