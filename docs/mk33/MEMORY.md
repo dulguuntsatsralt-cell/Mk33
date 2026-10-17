@@ -191,6 +191,35 @@ intervals. Differences of a few hundredths of a nat (for example H2O vs random a
 4,096) may not survive repeats. Next: several documents and seeds with bootstrap
 intervals, and a second model family (Llama 3.2 3B).
 
+## RAG vs KV-cache eviction on the same metric
+
+The agent bench needs a model that edits code reliably. To compare the two kinds of
+forgetting before that, `scripts/mk33/memory_quality.py` puts them on one metric:
+next-token loss on the end of a long window, with the same number of context tokens
+left in the cache.
+
+| method | what the model reads | what is cut to `budget` tokens |
+| --- | --- | --- |
+| `kv:random`, `kv:streaming`, `kv:keynorm`, `kv:h2o` | the whole context | its KV cache |
+| `text:recent` | the first 4 and the last `budget - 4` tokens | the text (truncation) |
+| `text:retrieve` | the first 4 tokens, the last 256, and the earlier chunks most relevant to them | the text, by BM25 retrieval (`src/mk33/kv/textmem.py`, the same retriever as the `retrieve` mode) |
+
+The continuation is appended without further compression, so every method ends at
+`budget + continuation` cache tokens. The script samples several windows from a corpus
+(default: this repository, about 95K tokens of LaTeX, Markdown and Python), runs
+`kv:random` with several seeds, and reports each method's loss increase over the full
+cache and its paired difference against random eviction, with bootstrap 95% intervals
+over windows. It saves after every measurement and resumes after a disconnect.
+
+```bash
+python scripts/mk33/memory_quality.py --model Qwen/Qwen2.5-3B-Instruct --dtype float16 --out results/memq_qwen
+python scripts/mk33/memory_quality.py --model unsloth/Llama-3.2-3B-Instruct --dtype float16 --out results/memq_llama
+```
+
+`unsloth/Llama-3.2-3B-Instruct` is an ungated copy of Meta's model, so it needs no
+Hugging Face token. Two model families test whether a finding (for example key-norm
+losing to random on Qwen2.5) is about the method or about one model.
+
 ## Status
 
 Implemented and tested on CPU and on a T4 GPU: retrieval modes, train/test consistency

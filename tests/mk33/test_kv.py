@@ -163,6 +163,22 @@ def test_continuation_nll(model, eager_model):
         assert nll > 0 and st.evicted_tokens > 0 and st.peak_cache_tokens <= 48 + 16
 
 
+def test_continuation_without_compression_keeps_budget_plus_continuation(model):
+    x = ids(120)
+    pol = KVPolicy("streaming", budget=40, sinks=4, recent=8)
+    _, st = CompressedGenerator(model, pol, chunk=16).continuation_nll(x, 80, compress_continuation=False)
+    assert st.peak_cache_tokens == 40 + 40  # budget after the context, then the 40 continuation tokens
+    _, st2 = CompressedGenerator(model, pol, chunk=16).continuation_nll(x, 80)
+    assert st2.peak_cache_tokens <= 40 + 16
+
+
+def test_random_eviction_is_reproducible_per_seed(model):
+    x = ids(120)
+    run = lambda seed: CompressedGenerator(model, KVPolicy("random", budget=40, sinks=4, recent=8, seed=seed),  # noqa: E731
+                                           chunk=16).continuation_nll(x, 80)[0]
+    assert run(0) == run(0) and run(0) != run(1)
+
+
 # ---------------------------------------------------------------- tool calls and client
 
 
