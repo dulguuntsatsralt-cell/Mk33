@@ -286,6 +286,14 @@ Limits: two 3B models, one corpus (this repository), 8 windows, 2 seeds for rand
 next-token loss rather than task success. Intervals over 8 windows are wide; several
 "unclear" cells could resolve with more windows.
 
+**More models.** [`notebooks/mk33_more_models.ipynb`](../../notebooks/mk33_more_models.ipynb) runs
+the same comparison on Qwen2.5-1.5B, Llama-3.2-1B, Qwen3-4B and IBM Granite-3.1-2B, all on a free
+T4. Qwen3 is the informative one for the key-norm question: it dropped the biased query/key
+projections of Qwen2.5. `scripts/mk33/make_figures.py` picks up every results folder and adds a
+cross-model chart once three or more models are present. The eviction code is checked on tiny
+random Qwen3, Granite and Llama-3 (scaled rotary) models: chunked prefill and evicted positions
+match a full forward pass exactly.
+
 ## Related work
 
 The methods compared here are published; this study re-implements them inside Mk33
