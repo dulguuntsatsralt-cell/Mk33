@@ -161,6 +161,7 @@ src/mk33/          the Mk33 package
 src/mk33/bench/    small CPU-only benchmark (environments, runner, report)
 src/mk33/kv/       KV-cache compression for local models (policies, Triton kernels, chat client)
 notebooks/         Colab notebooks that reproduce the GPU results
+assets/            logo, banner and social card (assets/make_assets.py rebuilds them)
 configs/mk33/      default config, DeepSpeed config, ablations
 scripts/mk33/      pipeline and ablation scripts
 tests/mk33/        unit and end-to-end tests
