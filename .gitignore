@@ -26,3 +26,6 @@ paper/*.fls
 paper/*.log
 paper/*.out
 paper/*.tar.gz
+
+# Fonts downloaded by assets/make_assets.py
+assets/.fonts/
