@@ -23,6 +23,7 @@ METRICS = [
     ("mean_gain", "mean gain"),
     ("recovery_rate", "recovery rate"),
     ("wasted_turn_share", "wasted-turn share"),
+    ("retry_rate", "re-try rate (lower is better)"),
     ("compactions", "compactions"),
 ]
 
@@ -100,8 +101,9 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         ra = {(r["env_id"], r["rep"]): r for r in by_mode[a]}
         rb = {(r["env_id"], r["rep"]): r for r in by_mode[b]}
         keys = sorted(set(ra) & set(rb))
-        for metric in ("best", "auc_rounds"):
-            diffs = [ra[k][metric] - rb[k][metric] for k in keys]
+        for metric in ("best", "auc_rounds", "retry_rate"):
+            diffs = [ra[k][metric] - rb[k][metric] for k in keys
+                     if ra[k].get(metric) is not None and rb[k].get(metric) is not None]
             if len(diffs) < 2:
                 continue
             lo, hi = _bootstrap_ci(diffs)
@@ -206,7 +208,7 @@ def collect_trajectories(out: str | Path, dest: str | Path, require_audit: bool 
 
 
 def compare_dirs(dirs: dict[str, str | Path], mode: str | None = None,
-                 metrics: tuple[str, ...] = ("best", "auc_rounds")) -> dict[str, Any]:
+                 metrics: tuple[str, ...] = ("best", "auc_rounds", "retry_rate")) -> dict[str, Any]:
     """Compare bench results from different models (one output directory each).
 
     Runs are paired by (environment, repeat) within one context ``mode`` (default: the
@@ -223,13 +225,15 @@ def compare_dirs(dirs: dict[str, str | Path], mode: str | None = None,
         rs = list(k.values())
         result["models"][n] = {
             "n": len(rs),
-            **{m: (statistics.mean(r[m] for r in rs) if rs else None) for m in metrics},
+            **{m: (statistics.mean(v) if (v := [r[m] for r in rs if r.get(m) is not None]) else None)
+               for m in metrics},
             "beat_reference_share": (sum(r["beat_reference"] for r in rs) / len(rs)) if rs else None,
         }
     for a, b in combinations(list(keyed), 2):
         keys = sorted(set(keyed[a]) & set(keyed[b]))
         for m in metrics:
-            diffs = [keyed[a][k][m] - keyed[b][k][m] for k in keys]
+            diffs = [keyed[a][k][m] - keyed[b][k][m] for k in keys
+                     if keyed[a][k].get(m) is not None and keyed[b][k].get(m) is not None]
             if len(diffs) < 2:
                 continue
             lo, hi = _bootstrap_ci(diffs)
@@ -242,11 +246,13 @@ def compare_dirs(dirs: dict[str, str | Path], mode: str | None = None,
 
 def render_comparison(c: dict[str, Any]) -> str:
     out = [f"# Model comparison (context mode `{c['mode']}`)\n",
-           "| model | runs | mean best | mean best-so-far AUC | beat reference |", "| --- | --- | --- | --- | --- |"]
+           "| model | runs | mean best | mean best-so-far AUC | re-try rate (lower is better) | beat reference |",
+           "| --- | --- | --- | --- | --- | --- |"]
     fmt = lambda v, p=".3f": "n/a" if v is None else format(v, p)
     for n, m in c["models"].items():
         share = "n/a" if m["beat_reference_share"] is None else f"{m['beat_reference_share']:.0%}"
-        out.append(f"| {n} | {m['n']} | {fmt(m.get('best'))} | {fmt(m.get('auc_rounds'))} | {share} |")
+        out.append(f"| {n} | {m['n']} | {fmt(m.get('best'))} | {fmt(m.get('auc_rounds'))} | "
+                   f"{fmt(m.get('retry_rate'))} | {share} |")
     if c["paired"]:
         out += ["\n| comparison | metric | pairs | mean diff | 95% CI | wins (a / b) | real difference? |",
                 "| --- | --- | --- | --- | --- | --- | --- |"]

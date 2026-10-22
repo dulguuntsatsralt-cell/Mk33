@@ -3,12 +3,14 @@
 # Run from the repository folder in PowerShell:
 #     powershell -ExecutionPolicy Bypass -File scripts\mk33\windows\run_local.ps1            # set up + pilot run
 #     powershell -ExecutionPolicy Bypass -File scripts\mk33\windows\run_local.ps1 -Full      # full grid (overnight)
+#     powershell -ExecutionPolicy Bypass -File scripts\mk33\windows\run_local.ps1 -Long      # one 40-round run per mode
 #
 # Needs: Python 3.10+, Git for Windows (the agent's commands run in Git Bash), Ollama.
 # Guide: docs/mk33/WINDOWS.md
 
 param(
     [switch]$Full,                       # run the full grid instead of the pilot
+    [switch]$Long,                       # one long run per memory mode (40 rounds), then a plot
     [string]$Model = "qwen2.5:3b",       # any Ollama model with tool calling
     [int]$Context = 10240,               # Ollama context length; must exceed -Window
     [int]$Window = 8000,                 # agent's text window (tokens)
@@ -54,7 +56,16 @@ $common = @("--model", $local, "--base-url", "http://localhost:11434/v1", "--wor
 Write-Host "== 5. Environments"
 mk33 bench-prepare --out bench/envs; Check "bench-prepare"
 
-if (-not $Full) {
+if ($Long) { $Out = "bench\long"; $common[-1] = $Out }
+if ($Full -and $Long) { throw "Choose -Full or -Long, not both." }
+
+if ($Long) {
+    Write-Host "== 6. Long run: regression task, truncate vs rlc, up to 40 rounds each (about 8 to 10 hours; safe to stop and rerun)"
+    mk33 bench-run @common --tasks regression --modes truncate,rlc --repeats 1 --max-rounds 40 --max-tool-calls 200 --max-minutes 300
+    python -m pip install -q matplotlib
+    python scripts/mk33/plot_curves.py $Out
+    Write-Host "Figure: $Out\curves.png"
+} elseif (-not $Full) {
     Write-Host "== 6. Pilot: one task, two memory modes, short budget (about 1 to 2 hours on a laptop CPU)"
     mk33 bench-run @common --tasks knapsack --modes truncate,rlc --repeats 1 --max-rounds 5 --max-tool-calls 30 --max-minutes 60
 } else {

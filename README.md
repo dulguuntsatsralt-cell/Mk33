@@ -132,9 +132,10 @@ Google Drive and runs resume where they stopped.
 ## First trained model: PALM vs uniform masking
 
 `notebooks/mk33_train_palm.ipynb` runs ablation A1 at a scale that fits one T4: a teacher solves training versions of
-the bench tasks (data seeds 1 to 3), the selected runs train two LoRA students on Qwen2.5-1.5B-Instruct (one with PALM
-weights, one with uniform weights, nothing else different), and base, uniform and PALM models are compared on held-out
-tasks (seed 0). Configs: `configs/mk33/colab/`. The training path is tested end to end on CPU with a tiny model
+the bench tasks (data seeds 1 to 3), the selected runs train three LoRA students on Qwen2.5-1.5B-Instruct with PALM
+weights, AREX-2's masking, and uniform weights (nothing else different), and the base model and the three students are
+compared on held-out tasks (seed 0). The PALM vs AREX comparison is the direct test of Mk33's loss masking against
+AREX-2's own. Configs: `configs/mk33/colab/`. The training path is tested end to end on CPU with a tiny model
 (`tests/mk33/test_train_smoke.py`).
 
 ```bash
@@ -142,6 +143,19 @@ mk33 bench-collect --out teacher_runs --to trajs.jsonl            # teacher data
 mk33 train --config configs/mk33/colab/palm.yaml                   # LoRA, float16, merged model saved
 mk33 bench-compare --runs base=eval/base,palm=eval/palm --mode rlc # paired comparison across models
 ```
+
+## Re-try rate: measuring forgetting directly
+
+Besides the paper's process metrics, the bench reports a **re-try rate**: the share of rounds that repeat a known dead
+end, meaning a solution identical to an earlier submission, or an idea that closely matches an earlier round that did not
+improve the score. An agent that remembers what failed should not try it again, so this measures what context memory is
+supposed to prevent. It appears in `report.md`, in `bench-compare`, and in `mk33.metrics.retry_rate`.
+
+## Long runs
+
+`run_local.ps1 -Long` runs the regression task for up to 40 rounds with `truncate` and with `rlc` on a laptop
+(about 8 to 10 hours), then `scripts/mk33/plot_curves.py` draws best-so-far by round with the first compaction marked:
+the figure that shows whether the agent keeps improving after its context fills up.
 
 ## Web research agent
 
