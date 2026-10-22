@@ -15,6 +15,7 @@
 \usepackage{xcolor}
 \usepackage{algorithm}
 \usepackage[noend]{algpseudocode}
+\usepackage{graphicx}
 \usepackage{tikz}
 \usetikzlibrary{positioning,arrows.meta,fit}
 \usepackage[numbers,sort&compress]{natbib}
@@ -26,6 +27,9 @@
 \newcommand{\stilde}{\tilde{s}}
 \newcommand{\splus}{S^{+}}
 \newcommand{\code}[1]{\texttt{#1}}
+% Results that the released notebooks produce but that are not yet available.
+\newcommand{\pending}[1]{\colorbox{orange!18}{\textsf{\footnotesize [pending: #1]}}}
+\newcommand{\tbd}{{\color{orange!75!black}\textsf{\footnotesize tbd}}}
 
 \title{\Large\textbf{Mk33: A Fully Specified Recipe and Reference Implementation\\for Training Long-Horizon Self-Improving Agents}}
 \author{Dulguun Enkhtsatsral\\New York University Shanghai\\\texttt{de2318@nyu.edu}}
@@ -35,7 +39,7 @@
 \maketitle
 
 \begin{abstract}
-AREX-2 shows that a 27B-parameter agent trained by imitation on long-horizon improvement trajectories can keep refining a solution for hours, and that this ability transfers to deep-research tasks. The paper describes its training recipe in prose and releases only evaluation code. Several components a reimplementation needs are left open: numeric thresholds for filtering environments and accepting trajectories, a definition of the ``no-progress'' turns excluded from the loss, the agent's tool set, and what happens when a multi-hour run exceeds the context window. We present Mk33, a complete specification of this recipe together with an open reference implementation. It contributes (1) a noise-aware environment filter, baseline-to-reference score normalization, benchmark decontamination, and an isolated, hash-checked scorer with a process audit; (2) Round Ledger Compaction (RLC), a context manager that keeps every round, including failures, visible in a structured ledger and freezes the context prefix between compactions, so each segment between compactions is exactly one training window; (3) Progress-Aware Loss Masking (PALM), deterministic rules for redundant, null, and polling turns plus provenance-based credit for turns that lead to score improvements; and (4) a full training configuration. The implementation includes tests that check, among other properties, that every context the agent sends to the model is reproduced exactly by the offline training replay. We define an evaluation protocol on the six AREX-2 benchmarks with seven ablations and process metrics that measure reflection and long-horizon execution directly. We also release a small CPU-only benchmark that runs the scaffold against any OpenAI-compatible model and report a first pilot run on it. This report specifies the method and protocol; results at the scale of the protocol are not yet available.
+AREX-2 shows that a 27B-parameter agent trained by imitation on long-horizon improvement trajectories can keep refining a solution for hours. The paper describes its training recipe in prose and releases only evaluation code, leaving open the thresholds for filtering environments and accepting trajectories, the definition of the ``no-progress'' turns excluded from the loss, the agent's tool set, and what happens when a multi-hour run exceeds the context window. We present Mk33, a complete specification of this recipe with an open, tested reference implementation. It contributes a noise-aware environment filter with decontamination and an isolated, audited scorer; Round Ledger Compaction (RLC), a context manager that keeps every round, including failures, in a structured ledger and yields training windows identical to the contexts seen at test time; and Progress-Aware Loss Masking (PALM), deterministic rules that zero out redundant, null, and polling turns and give full credit to turns that lead to score improvements. Because the full recipe needs a GPU cluster, we design every experiment so that it also runs at small scale on one free GPU or a laptop: the same scaffold, metrics, and statistics, with a context window shrunk so that runs still outgrow it. In a memory study at equal cache size on two 3B models, attention-based KV-cache eviction (H2O) had the lowest loss in every setting and stayed within 0.05 to 0.07 nats of the full cache while keeping half the context, while BM25 retrieval was never distinguishable from plain truncation. We release, with ready-to-run notebooks, three further experiments: task success under each memory method, a direct comparison of PALM against AREX-2's own loss masking and uniform weighting on a LoRA-trained 1.5B model, and 40-round runs that test whether the agent keeps improving after its context fills up. We also introduce a re-try rate that measures forgetting directly, as the share of rounds that repeat a known dead end. \pending{headline task-success and PALM vs.\ AREX-2 results}
 \end{abstract}
 
 % ===================================================================
@@ -46,17 +50,20 @@ An agent that can improve its own solution over many rounds converts extra test-
 
 The result is useful but difficult to build on. The public repository contains evaluation runners only. The paper specifies its pipeline qualitatively: environments are kept when a baseline scores ``well below the reference''; the loss skips ``near-duplicate turns''; trajectories are accepted when the final score is ``high.'' Two questions receive no answer: how a run that lasts up to 12 hours fits in a finite context window, and which teacher model generates the data.
 
-This report does not claim a new capability. Its goal is to make the AREX-2 recipe reproducible and testable. For each component AREX-2 leaves open, we give a precise specification, a rationale, a configuration key, and an ablation that tests whether the choice matters. We also release a reference implementation, built as an extension of the AREX-2 repository, so that each specification can be checked against working code.
+This report does not claim a new capability at AREX-2's scale. Its goal is to make the recipe reproducible and testable. For each component AREX-2 leaves open, we give a precise specification, a rationale, a configuration key, and an ablation that tests whether the choice matters, and we release a reference implementation so that each specification can be checked against working code.
+
+Testing the recipe at its intended scale requires thousands of multi-hour rollouts and full fine-tuning of a 27B model. We therefore also ask a narrower question that can be answered with modest compute: \emph{do the mechanisms work when the problem they address is reproduced at small scale?} The defining difficulty of long-horizon runs is that the history outgrows the context window. With an 8K-token window instead of 128K, a run of a few dozen rounds on a 1.5B to 3B model reaches the same situation, so RLC, PALM, and their alternatives can be compared under controlled conditions on one free GPU (\cref{sec:small}).
 
 \paragraph{Contributions.}
 \begin{enumerate}
   \item \textbf{Environment specification} (\cref{sec:envs}): baseline-to-reference normalization, a noise-aware headroom filter, benchmark decontamination, and scorer isolation with a process audit against reward hacking.
   \item \textbf{Round Ledger Compaction} (\cref{sec:rlc}): a context manager for multi-hour runs that keeps a structured record of every round, freezes the context prefix between compactions, and is shared verbatim by the agent and the training data pipeline.
   \item \textbf{Progress-Aware Loss Masking} (\cref{sec:palm}): formal rules for zero-weight turns and a provenance set of full-credit turns, computed deterministically from trajectory logs.
-  \item \textbf{A complete recipe and reference implementation} (\cref{sec:recipe,sec:impl}): acceptance rules, every training hyperparameter, configuration files for each ablation, and tests for the properties the method depends on.
-  \item \textbf{An evaluation protocol} (\cref{sec:protocol}): seven ablations and five process metrics that measure the two capabilities AREX-2 names, rather than final scores alone.
-  \item \textbf{A CPU pilot benchmark} (\cref{sec:pilot}): four seeded environments that run the full scaffold against any OpenAI-compatible model, with a first pilot run.
+  \item \textbf{A complete recipe and tested implementation} (\cref{sec:recipe,sec:impl}): acceptance rules, every training hyperparameter, a configuration file per ablation, and a test suite that checks the properties the method depends on, including that training contexts reproduce test-time contexts exactly.
+  \item \textbf{A memory study at equal cache size} (\cref{sec:memory}): text-level forgetting (truncation, BM25 retrieval) against KV-cache eviction (random, streaming, key-norm, H2O) on two 3B models, with paired bootstrap intervals and fused Triton kernels for the eviction step.
+  \item \textbf{Small-scale experiments with released notebooks} (\cref{sec:small}): task success under each memory method, PALM against AREX-2's masking and uniform weighting, and 40-round long runs, all on free hardware, with a new \emph{re-try rate} metric for forgetting.
 \end{enumerate}
+
 
 % ===================================================================
 \section{Background and Gap Analysis}
@@ -278,7 +285,7 @@ Reasoning tokens inside a turn share the turn's weight.
 Heuristic rules can be wrong, so we measure them before training. Two annotators label 500 turns sampled from 50 trajectories as \emph{no progress}, \emph{neutral}, or \emph{progress}. We report precision and recall of the zero-weight rules and of $\splus$ against these labels, Cohen's $\kappa$ between the rules and the adjudicated labels, and $\kappa$ between the two annotators. If the rules agree with the labels less than the annotators agree with each other, thresholds are revised before any training run.
 
 % ===================================================================
-\section{Trajectory Selection and Training Recipe}
+\section{Trajectory Selection and Full-Scale Training Recipe}
 \label{sec:recipe}
 % ===================================================================
 
@@ -292,7 +299,7 @@ AREX-2 does not name its teacher, although results may depend heavily on it. We 
 
 \subsection{Data and hyperparameters}
 \label{sec:hparams}
-\Cref{tab:hparams} lists the planned data scale and the training configuration. These are proposed defaults chosen to match common practice for full-parameter supervised fine-tuning at this scale; they will be tuned on a validation split of 100 environments, and any changes will be reported.
+\Cref{tab:hparams} lists the planned data scale and the full-scale training configuration; the small-scale configuration used in \cref{sec:palmexp} is given there. These are proposed defaults chosen to match common practice for full-parameter supervised fine-tuning at this scale; they will be tuned on a validation split of 100 environments, and any changes will be reported.
 
 \begin{table}[t]
 \centering
@@ -326,12 +333,20 @@ Seeds & 3 for the main model, 1 per ablation \\
 \label{sec:impl}
 % ===================================================================
 
+We release the implementation as a standalone Python package that runs on Linux, macOS, and Windows. The package has seven modules: \code{envs} (normalization, filter, decontamination, scorer, audit, synthesis), \code{scaffold} (tools, sandboxes, ledger, RLC, retrieval memory, shared context builder, agent loop), \code{palm} (rules, provenance, weights, validation), \code{selection}, \code{train} (window construction and the weighted loss of \cref{eq:loss}), \code{metrics}, and \code{kv} (KV-cache eviction policies and kernels for local models). A command-line tool runs each pipeline stage, and every threshold in this report is a configuration value. Each ablation in \cref{tab:ablations} is a configuration file that inherits the defaults and overrides only what it changes.
+
+\paragraph{Tests.} The suite (139 tests, run on Linux, macOS, and Windows in continuous integration) checks the properties the method depends on: normalization for both metric directions; each filter, decontamination, and audit rule; that the scorer refuses to run when its script hash changes; that ledger compaction never drops a round and never merges the best entry; that RLC contexts are append-only between events; each PALM rule, including that a re-run after an edit is not redundant and that a status check with new lines is not polling; and the acceptance rule and process metrics. An end-to-end test runs a scripted agent with a context window small enough to force compaction, computes PALM weights, applies the acceptance rule, builds training windows, and asserts that \emph{every context the agent sent to the model is a prefix of the training window that covers that turn}, the property \cref{sec:windows} relies on.
+
+\paragraph{Training at small scale.} The trainer supports LoRA~\citep{hu2022lora}, float16, and SDPA attention, so that the experiments of \cref{sec:palmexp} fit on one 16\,GB GPU. Because most tokens in a window are context with weight zero, the loss is computed only at positions that predict a weighted token: with a batch of one, only those hidden states pass through the language-model head. On a 1.5B model with an 8K window this reduces the logits from about 5\,GB to a few hundred MB; tests confirm that the loss and every parameter gradient equal those of the full computation. Two further details keep training and inference contexts identical: the chat template receives exactly the tool schemas the agent sends (six for the bench, in the same order), and tool-call arguments pass through the same conversion before templating in training and in the local inference client. A test runs the whole small-scale path on CPU with a tiny randomly initialized model: teacher runs, selection, PALM and baseline windows, LoRA training, merging, and generation with the merged model.
+
+% ===================================================================
+
 We release the implementation as a standalone Python package; the benchmarks in \cref{sec:protocol} are run with the AREX-2 evaluation harness, released separately by its authors, so that scores are directly comparable. The package has six modules: \code{envs} (normalization, filter, decontamination, scorer, audit, synthesis), \code{scaffold} (tools, sandboxes, ledger, RLC, shared context builder, agent loop), \code{palm} (rules, provenance, weights, validation), \code{selection}, \code{train} (window construction and the weighted loss of \cref{eq:loss}), and \code{metrics}. A command-line tool runs each pipeline stage, and every threshold in this report is a configuration value. Each ablation in \cref{tab:ablations} is a configuration file that inherits the defaults and overrides only what it changes.
 
 The test suite checks the properties the method depends on, including: normalization for both metric directions; each filter and decontamination rule; that the scorer refuses to run when its script hash changes; each audit rule; that ledger compaction never drops a round and never merges the best entry; that RLC contexts are append-only between events; each PALM rule, including that a re-run after an edit is not redundant and that a status check with new lines is not polling; and the acceptance rule and process metrics. An end-to-end test runs a scripted agent on a small environment with a context window small enough to force compaction, then computes PALM weights, applies the acceptance rule, builds training windows, and asserts that \emph{every context the agent sent to the model is a prefix of the training window that covers that turn}. This is the property that \cref{sec:windows} relies on. The weighted-loss and chat-template code has not yet been exercised on GPUs.
 
 % ===================================================================
-\section{Evaluation Protocol}
+\section{Full-Scale Evaluation Protocol}
 \label{sec:protocol}
 % ===================================================================
 
@@ -342,7 +357,7 @@ We use the six AREX-2 benchmarks and budgets so that results are directly compar
 (i) \emph{Base}: Qwen3.8-27B in our scaffold with RLC, untrained. (ii) \emph{AREX-2}: the public weights, run both in our scaffold and in the AREX-2 harness, which separates the effect of the model from the effect of the scaffold. (iii) \emph{Mk33}: the full method.
 
 \paragraph{Process metrics.}
-Final scores do not show which capability improved. Following \cref{eq:decomp}, we also report: \emph{productive rounds} $T^{*}$, the number of rounds before the first run of five rounds without an improving submission; \emph{mean gain} $\bar{r}$, the mean normalized gain over improving rounds; \emph{best-so-far AUC}, the area under the normalized best-so-far curve over the time budget; \emph{recovery rate}, the share of regressions followed by a new best within three rounds; and \emph{wasted-turn share}, the share of test-time turns flagged by $R$, $N$, or $P$.
+Final scores do not show which capability improved. Following \cref{eq:decomp}, we also report: \emph{productive rounds} $T^{*}$, the number of rounds before the first run of five rounds without an improving submission; \emph{mean gain} $\bar{r}$, the mean normalized gain over improving rounds; \emph{best-so-far AUC}, the area under the normalized best-so-far curve over the time budget; \emph{recovery rate}, the share of regressions followed by a new best within three rounds; \emph{wasted-turn share}, the share of test-time turns flagged by $R$, $N$, or $P$; and the \emph{re-try rate} of \cref{sec:retry}.
 
 \paragraph{Ablations.}
 Each ablation changes one component (\cref{tab:ablations}). A7 is the central test of the AREX-2 transfer claim: if single-attempt trajectories matched on token count produce the same deep-research gains, those gains come from additional agentic training rather than from learning to iterate. Following AREX-2, we also plot best-so-far score against time on Frontier-CS (with feedback) and against turn budget on BrowseComp (without feedback), and add these curves for each A2 variant, since context management should matter most late in long runs.
@@ -368,19 +383,22 @@ A7 & Is transfer caused by iteration? & Token-matched single-attempt trajectorie
 \end{table}
 
 % ===================================================================
-\section{Pilot Benchmark}
-\label{sec:pilot}
+\section{Small-Scale Experiments}
+\label{sec:small}
 % ===================================================================
 
-The protocol in \cref{sec:protocol} needs GPUs and multi-hour runs. To test the scaffold end to end before that, the implementation includes a small benchmark that runs on one CPU with any OpenAI-compatible model. It reuses the agent loop, tool set, isolated scorer, headroom filter, process audit, and process metrics without changes.
+The protocol of \cref{sec:protocol} needs GPU clusters and multi-hour runs. This section tests the mechanisms at a scale that fits one free GPU (a Colab T4) or a laptop CPU. All experiments use the scaffold, scorer, metrics, and statistics of the full protocol unchanged; what changes is the size of the models, the tasks, and the context window. Each experiment is released as a notebook or script that saves results after every run and resumes after a disconnect.
+
+\subsection{Setting}
+\label{sec:smallsetting}
 
 \paragraph{Environments.}
-Four environments are generated from a fixed seed and use only the Python standard library (\cref{tab:bench}): nonlinear regression (Friedman~\#1, RMSE), sentiment classification of synthetic reviews with negation and 3\% label noise (accuracy), forecasting of 30 daily series with trend, weekly seasonality, and level shifts (MASE), and 24 hidden 0/1 knapsack instances (mean optimality gap). The agent sees a task statement, a weak baseline solution, and the public split; the held-out split, scorer, and reference solutions are kept in the isolated scorer directory. Baseline and reference scores are measured by running the real scorer, and all four environments pass the headroom filter of \cref{sec:envs}. Knapsack has a known optimum, so its normalized score is capped near 1.02; the other three leave room above the reference.
+Four environments are generated from a seed and use only the Python standard library (\cref{tab:bench}): nonlinear regression (Friedman~\#1, RMSE), sentiment classification of synthetic reviews with negation and 3\% label noise (accuracy), forecasting of 30 daily series with trend, weekly seasonality, and level shifts (MASE), and 24 hidden 0/1 knapsack instances (mean optimality gap). The agent sees a task statement, a weak baseline solution, and the public split; the held-out split, scorer, and reference solutions stay in the isolated scorer directory. Baseline and reference scores are measured by running the real scorer, and all four environments pass the headroom filter of \cref{sec:envs}. Knapsack has a known optimum, so its normalized score is capped near 1.02; the other three leave room above the reference. The experiments below use regression and knapsack. Different seeds generate different data, which gives a clean train/test split for \cref{sec:palmexp}: training environments use seeds 1 to 3 and all evaluations use seed 0.
 
 \begin{table}[t]
 \centering
 \small
-\caption{Pilot benchmark environments (seed 0). Raw scores from the isolated scorer; the reference is run with three seeds. Normalized scores map the baseline to 0 and the reference mean to 1.}
+\caption{Bench environments (seed 0). Raw scores from the isolated scorer; the reference is run with three seeds. Normalized scores map the baseline to 0 and the reference mean to 1.}
 \label{tab:bench}
 \begin{tabular}{@{}l l r l@{}}
 \toprule
@@ -394,11 +412,176 @@ Knapsack & optimality gap $\downarrow$ & 0.321 & 0.0052, 0.0063, 0.0048 \\
 \end{tabular}
 \end{table}
 
-\paragraph{Design.}
-The benchmark runs an inference-time version of ablation A2: with the model fixed, it compares RLC against truncation of the oldest turns, using a 24K-token window so that long runs must be compacted. Both modes run on the same environments, seeds, and budgets, and the report gives paired differences with seeded bootstrap 95\% intervals. Runs are resumable, and model calls can be rate-limited for free API tiers.
+\paragraph{Reproducing the overflow.}
+The default window of 128K tokens is replaced by 8,000, with compaction at 75\% and the last two rounds kept verbatim. A run of 8 rounds and 40 tool calls on these tasks exceeds this window, so every memory method is exercised; the long runs of \cref{sec:longrun} go to 40 rounds. Everything else in the scaffold is unchanged.
 
-\paragraph{First run.}
-We ran one hosted model through a free API tier on the knapsack environment with 25 tool calls and 8 rounds per run. The tier's limit of 50 requests per day allowed one pair before the remaining runs were stopped. The truncation run submitted one round and reached a normalized score of 1.017, the optimum. The RLC run wrote and tested an exact dynamic-programming solver but used its 25 tool calls before submitting, so it scored 0. Until the first compaction the two modes send nearly the same context, and the RLC ledger is empty before the first submission, so this pair carries no evidence about RLC. It shows that the pipeline works end to end with a real model, that runs vary widely, and that 25 tool calls is too tight a budget. Earlier attempts with small local models (3B to 8B parameters on a laptop CPU) did not finish: a reasoning model exceeded the per-call timeout, and a 3B model described edits instead of calling the tools. The full grid (four environments, both modes, three repeats) remains to be run.
+\paragraph{Statistics.}
+Runs are paired by environment and repeat. For each pair of systems we report the mean paired difference with a seeded bootstrap 95\% interval~\citep{efron1979bootstrap} and call a difference real only when the interval excludes zero.
+
+\subsection{Re-try rate}
+\label{sec:retry}
+The process metrics of \cref{sec:protocol} measure progress. Context management exists to prevent a specific failure: forgetting what has already been tried. We measure it directly. Round $t \ge 2$ is a \emph{re-try} if (a) the scored solution is identical, after whitespace normalization, to one submitted in an earlier round, or (b) the word set of its \code{hypothesis} has Jaccard similarity of at least 0.6 with the hypothesis of an earlier round that failed or did not improve on the best score. Hypotheses of fewer than three content words are not compared, and an idea that previously improved the score is never counted. The re-try rate is the share of rounds after the first that are re-tries; lower is better. Rule (a) is exact; rule (b) misses re-tries that are reworded, so the rate is a lower bound.
+
+\subsection{Memory at equal cache size}
+\label{sec:memory}
+Once a run outgrows its window, something must be forgotten. Forgetting can happen in the text, before the model reads it (truncation, the ledger, or retrieval that puts relevant old text back), or inside the model, by keeping the full history and compressing the key-value (KV) cache to a fixed budget. Before measuring task success, we compare the two on a metric that needs no agent.
+
+\paragraph{Protocol.}
+A window of 8,192 context tokens is followed by 1,024 continuation tokens, sampled from a corpus of about 95K tokens of LaTeX, Markdown, and Python. We measure the next-token loss on the continuation when only \emph{budget} tokens of the context remain in the cache, relative to the full cache. KV methods read the whole context and then evict: random (a control, two seeds), streaming~\citep{xiao2024streamingllm} (attention sinks and recent tokens), key-norm~\citep{devoto2024l2norm} (low-norm keys), and H2O~\citep{zhang2023h2o} (accumulated attention). Text methods cut the context before the model reads it: truncation keeps the first 4 and the most recent tokens; retrieval keeps the first 4 and last 256 tokens plus the earlier chunks most relevant to them by BM25~\citep{robertson2009bm25}, the same retriever as the agent's \code{retrieve} mode. Every method ends at budget plus continuation cache tokens, so memory is equal by construction. Models are Qwen2.5-3B-Instruct~\citep{qwen2024qwen25} and Llama-3.2-3B-Instruct~\citep{grattafiori2024llama3} in float16, 8 windows each.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Loss increase over the full cache (nats; lower is better), mean over 8 windows. Bold: lowest in the row. Intervals are in \cref{fig:loss}.}
+\label{tab:memory}
+\begin{tabular}{@{}r l r r r r r r@{}}
+\toprule
+& & \multicolumn{4}{c}{KV-cache eviction} & \multicolumn{2}{c}{Text level} \\
+\cmidrule(lr){3-6}\cmidrule(l){7-8}
+Kept & Model & H2O & Key-norm & Random & Streaming & Truncation & BM25 \\
+\midrule
+1,024 & Qwen & \textbf{0.203} & 0.304 & 0.259 & 0.284 & 0.288 & 0.288 \\
+1,024 & Llama & \textbf{0.265} & 0.376 & 0.456 & 0.470 & 0.291 & 0.327 \\
+2,048 & Qwen & \textbf{0.120} & 0.230 & 0.191 & 0.210 & 0.206 & 0.222 \\
+2,048 & Llama & \textbf{0.156} & 0.262 & 0.349 & 0.363 & 0.196 & 0.242 \\
+4,096 & Qwen & \textbf{0.049} & 0.104 & 0.079 & 0.141 & 0.133 & 0.125 \\
+4,096 & Llama & \textbf{0.068} & 0.103 & 0.144 & 0.262 & 0.131 & 0.122 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/loss_vs_budget.pdf}
+\caption{Loss increase over the full cache by memory budget, with bootstrap 95\% intervals over 8 windows. Solid: KV-cache eviction. Dashed: text-level forgetting.}
+\label{fig:loss}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\small
+\caption{Paired comparisons at budgets 1K / 2K / 4K. ``Better'' or ``worse'' only when the bootstrap 95\% interval of the paired difference excludes zero; otherwise ``unclear''.}
+\label{tab:memorypairs}
+\begin{tabular}{@{}l l l@{}}
+\toprule
+Comparison & Qwen2.5-3B & Llama-3.2-3B \\
+\midrule
+H2O vs random & unclear / better / better & better / better / better \\
+H2O vs BM25 retrieval & better / better / better & unclear / better / better \\
+H2O vs truncation & better / better / better & unclear / unclear / unclear \\
+BM25 retrieval vs truncation & unclear / unclear / unclear & unclear / unclear / unclear \\
+Key-norm vs random & worse / worse / worse & better / better / unclear \\
+Streaming vs random & worse / unclear / unclear & unclear / unclear / worse \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Findings.}
+\Cref{tab:memory,tab:memorypairs} and \cref{fig:loss} support four statements. (1) \emph{H2O is the most reliable method.} It has the lowest loss in every cell, beats random in 5 of 6 comparisons and BM25 retrieval in 5 of 6, and is never significantly worse than any method. Keeping half the context, it stays within 0.05 to 0.07 nats of the full cache. (2) \emph{BM25 retrieval was not distinguishable from truncation} in any of the 6 comparisons. For predicting the continuation of code and prose, the most recent text was as useful as keyword-matched older text. This is consistent with \citet{corallo2025beyondrag}, who find KV compression ahead of retrieval on broad tasks and retrieval still useful for narrow ones; an agent that needs one specific old fact, such as an error from round 2, is the narrow case, which \cref{sec:tasksuccess} tests. (3) \emph{Key-norm eviction depends on the model}: worse than random at every budget on Qwen2.5, better than random at 1K and 2K on Llama 3.2. A heuristic validated on one model family should be rechecked on another; why it fails on Qwen2.5 is not established here. (4) \emph{Equal memory is not equal compute} (\cref{fig:compute}). Text methods prefill only the kept tokens and took 1.6 to 1.8\,s per measurement; KV methods read the whole context first (4.4 to 4.9\,s; H2O 7.6 to 8.2\,s, since it needs eager attention to accumulate scores). H2O's quality costs roughly 4.5 times the compute of retrieval at the same memory.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/quality_vs_compute.pdf}
+\caption{Quality against compute at equal memory (2,048 context tokens kept). Text methods read only the kept tokens; KV methods read all 8,192 first.}
+\label{fig:compute}
+\end{figure}
+
+\paragraph{Kernels.}
+The eviction step reads and gathers every layer's cache once per compression, so it is memory-bound. We implement it in Triton~\citep{tillet2019triton}. On a T4 (peak 320\,GB/s) in float16, the key-norm kernel reaches 228 to 260\,GB/s from 8K to 128K cached tokens, about 80\% of peak and 5 to 7 times faster than computing norms in PyTorch, which first writes a float32 copy of the keys; the fused gather is 1.5 to 1.9 times faster than two \code{torch.gather} calls at 8K tokens and above. At 2K tokens a fixed launch cost of about 0.12\,ms dominates and PyTorch is faster.
+
+\paragraph{Limits.} Two 3B models, one corpus, 8 windows, and two seeds for the random control; intervals are wide, and several ``unclear'' cells could resolve with more windows. Next-token loss is a proxy; \cref{sec:tasksuccess} measures task success.
+
+\subsection{Task success under each memory method}
+\label{sec:tasksuccess}
+This experiment asks whether the differences of \cref{sec:memory} change what an agent solves. The agent (Qwen2.5-3B-Instruct, float16, one T4) runs the regression and knapsack tasks with five memory methods at an equal budget of 8,000 tokens: \code{truncate}, \code{rlc}, and \code{retrieve} (BM25 over dropped turns) at the text level; \code{kv:h2o}, which keeps the full text history and evicts the KV cache to 8,000 tokens; and \code{kv:full}, which forgets nothing up to the model's 32K limit and serves as an upper bound with four times the memory. Each run has up to 8 rounds, 40 tool calls, and 25 minutes; each configuration is repeated three times (30 runs). We report the best normalized score, the share of runs that beat the reference, best-so-far AUC over rounds, the re-try rate, and peak KV-cache memory. The comparisons of interest are \code{rlc} against \code{truncate} (an inference-time version of ablation A2), \code{retrieve} against \code{truncate} (whether retrieval helps on the narrow recall an agent needs), and \code{kv:h2o} against the text-level methods.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Task success by memory method (Qwen2.5-3B, regression and knapsack, 3 repeats). Normalized scores: baseline 0, reference 1. \pending{notebooks/mk33\_task\_success.ipynb}}
+\label{tab:tasksuccess}
+\begin{tabular}{@{}l r r r r r@{}}
+\toprule
+Method & Best score & Beat reference & AUC & Re-try rate $\downarrow$ & Peak KV (MB) \\
+\midrule
+\code{truncate} & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\code{rlc} & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\code{retrieve} & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\code{kv:h2o} & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\code{kv:full} (4$\times$ memory) & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\pending{discussion of \cref{tab:tasksuccess}: paired differences rlc vs truncate, retrieve vs truncate, kv:h2o vs text methods}
+
+\subsection{Loss masking: PALM against AREX-2's masking}
+\label{sec:palmexp}
+PALM's central claim is that weighting turns by their contribution to progress trains a better long-horizon agent than masking only redundant, null, and polling turns, as AREX-2 describes. This experiment is ablation A1 at small scale, with AREX-2's rule as the main baseline.
+
+\paragraph{Data.} A teacher runs the regression and knapsack tasks with data seeds 1 to 3 (six training environments), two runs each, with RLC at an 8,000-token window, 8 rounds, and 40 tool calls. The teacher is Qwen2.5-3B-Instruct run locally, or an open-weight model served through an API; closed models are excluded because their terms forbid training on their outputs. \pending{teacher used and number of runs collected}. Runs are accepted by the rule of \cref{sec:accept} with $\tau = 0.5$ instead of 0.9, since a small teacher rarely reaches the reference; at most two runs are kept per environment. The audit is applied unchanged.
+
+\paragraph{Three students.} The accepted runs are turned into training windows three times, differing only in the turn weights: \emph{PALM} (\cref{eq:weights}, $\lambda=0.5$), \emph{AREX-2 masking} (weight 0 for $R$, $N$, $P$ turns and 1 for every other turn, that is, PALM's zero-weight rules without progress-aware credit), and \emph{uniform} (weight 1 on every assistant turn). Each set trains a LoRA adapter on Qwen2.5-1.5B-Instruct with identical settings (\cref{tab:smallhparams}). The windows are built with the same 8,000-token RLC configuration and the same six tool schemas the agent uses at test time, so the training contexts are those the student will see.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Small-scale training configuration, shared by the three students (\code{configs/mk33/colab/}).}
+\label{tab:smallhparams}
+\begin{tabularx}{\linewidth}{@{}l Y@{}}
+\toprule
+Item & Value \\
+\midrule
+Student & Qwen2.5-1.5B-Instruct, float16, SDPA attention \\
+Adapter & LoRA on all linear layers, rank 16, $\alpha=32$, dropout 0.05; adapter weights in float32 \\
+Optimizer & AdamW, $\beta = (0.9, 0.95)$, no weight decay \\
+Learning rate & Peak $2\times10^{-4}$, 5\% warmup, cosine decay to $2\times10^{-5}$ \\
+Epochs; batch & 3; 8 windows (micro-batch 1) \\
+Sequence length & up to 10,240 tokens; gradient checkpointing \\
+Hardware & one NVIDIA T4 (16\,GB) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Evaluation.} The base model and the three students run the held-out tasks (seed 0) with RLC at the same budget as the teacher, three repeats each. The comparison that tests PALM against AREX-2 is the paired difference between the PALM and AREX-2 students; uniform against base shows what training on teacher runs does at all.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Students on held-out tasks (Qwen2.5-1.5B, seed 0, 3 repeats). \pending{notebooks/mk33\_train\_palm.ipynb}}
+\label{tab:palm}
+\begin{tabular}{@{}l r r r r@{}}
+\toprule
+Model & Best score & AUC & Re-try rate $\downarrow$ & Beat reference \\
+\midrule
+Base (untrained) & \tbd & \tbd & \tbd & \tbd \\
+Uniform weights & \tbd & \tbd & \tbd & \tbd \\
+AREX-2 masking & \tbd & \tbd & \tbd & \tbd \\
+PALM & \tbd & \tbd & \tbd & \tbd \\
+\midrule
+PALM $-$ AREX-2 (95\% CI) & \tbd & \tbd & \tbd & \\
+Uniform $-$ base (95\% CI) & \tbd & \tbd & \tbd & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\pending{discussion of \cref{tab:palm}, including the PALM weight summary: share of turns with weight 0, $\lambda$, and 1}
+
+\subsection{Long runs}
+\label{sec:longrun}
+The claim behind RLC is about late rounds: an agent should keep improving after its early history no longer fits. We run the regression task, whose score has no ceiling, for up to 40 rounds, 200 tool calls, and 5 hours per run, with \code{truncate} and with \code{rlc}, on a laptop CPU (Qwen2.5-3B-Instruct, 4-bit, through Ollama with a 10,240-token context). The released script plots best-so-far score by round and marks the first compaction of each run; the quantity of interest is the slope after that point.
+
+\begin{figure}[t]
+\centering
+\fbox{\parbox[c][3.2cm][c]{0.9\linewidth}{\centering \pending{figure: best-so-far score by round, truncate vs rlc}\\[4pt]
+{\footnotesize produced by \code{scripts/mk33/windows/run\_local.ps1 -Long} and \code{scripts/mk33/plot\_curves.py}}}}
+\caption{Best-so-far normalized score over 40 rounds on the regression task.}
+\label{fig:longrun}
+\end{figure}
+
+\subsection{Pilot run}
+\label{sec:pilot}
+Before the experiments above, we ran one hosted model through a free API tier on the knapsack task with 25 tool calls and 8 rounds per run, which allowed one pair of runs. The truncation run reached the optimum (normalized 1.017) in one round; the RLC run wrote and tested an exact dynamic-programming solver but used its 25 tool calls before submitting and scored 0. Until the first compaction both modes send nearly the same context, so this pair carries no evidence about RLC. It shows that the pipeline works end to end with a real model and that 25 tool calls is too tight a budget; the experiments above use 40. Earlier attempts with small local models did not finish: a reasoning model exceeded the per-call timeout, and a 3B model described edits instead of calling tools. Tool-calling reliability of small models is therefore a risk for the experiments above. The notebooks check that the model's tool calls parse before starting, and runs in which the model stops calling tools are reported rather than dropped.
 
 % ===================================================================
 \section{Related Work}
@@ -417,6 +600,9 @@ AgentTuning~\citep{zeng2023agenttuning} and FireAct~\citep{chen2023fireact} fine
 \paragraph{Context management.}
 MemGPT~\citep{packer2023memgpt} pages information between a bounded context and external memory. RLC is narrower: its memory has a fixed schema tied to submission rounds, the prefix is frozen between compactions, and the model is trained on exactly the compacted views it sees at test time.
 
+\paragraph{KV-cache compression and retrieval.}
+StreamingLLM~\citep{xiao2024streamingllm} keeps attention sinks and recent tokens, H2O~\citep{zhang2023h2o} keeps tokens with high accumulated attention, and \citet{devoto2024l2norm} keep low-norm keys. \citet{chen2026pitfalls} study where KV compression fails. \citet{corallo2025beyondrag} compare retrieval with task-aware KV compression on long-context question answering and find compression stronger on broad questions and retrieval still effective on narrow ones. MemDecay~\citep{matam2026memdecay} evicts an agent's KV cache by the role of each region, such as the system prompt, plans, and tool outputs, and compares against recency- and attention-based retention, but not against text-level context management. The study in \cref{sec:memory} re-implements published eviction policies; its additions are text-level and KV-level forgetting under strictly equal cache size with a random-eviction control and paired intervals, retrieval memory inside a self-improving agent whose training windows reproduce the retrieved context, and the task-level comparison of \cref{sec:tasksuccess}.
+
 \paragraph{Reward hacking.}
 Optimizing a measurable proxy can diverge from the intended objective~\citep{skalse2022rewardhacking}. Scorer isolation, canary tests, and the audit in \cref{sec:audit} address this in verifiable environments.
 
@@ -426,25 +612,26 @@ Optimizing a measurable proxy can diverge from the intended objective~\citep{ska
 % ===================================================================
 
 \begin{itemize}
-  \item \textbf{No results at scale.} This report specifies the method, implementation, and protocol. The only measurements are one pilot pair on the CPU benchmark (\cref{sec:pilot}), which tests the pipeline rather than the method. Whether each component helps is an empirical question that the ablations are designed to answer.
-  \item \textbf{Heuristic thresholds.} The Jaccard cutoff, the windows $W_R$ and $M$, and the acceptance thresholds are reasoned defaults rather than tuned values. The human-label check and ablations A1, A3, and A4 are intended to catch poor choices.
+  \item \textbf{Small scale.} The experiments use 1.5B to 3B models, two synthetic task types, an 8K window, and runs of tens of rounds. They test whether the mechanisms work when the overflow problem is reproduced at small scale, not whether they reach AREX-2's scores or behave the same at 27B parameters, 128K tokens, and 12-hour runs. The full-scale protocol (\cref{sec:protocol}) has not been run.
+  \item \textbf{Small samples.} Three repeats per configuration and eight windows in the memory study give wide intervals; differences reported as ``unclear'' may be real effects too small to detect.
+  \item \textbf{Proxy tasks.} The bench tasks are small and synthetic. They have isolated scorers and real headroom, but they are not MLE-bench or Frontier-CS tasks, and results may not transfer.
+  \item \textbf{Small teacher.} A 3B teacher produces weaker trajectories than the teacher AREX-2 used, and the acceptance threshold is lowered accordingly. PALM's advantage, if any, may differ with a stronger teacher.
+  \item \textbf{Heuristic thresholds.} The Jaccard cutoffs, the windows $W_R$ and $M$, and the acceptance thresholds are reasoned defaults rather than tuned values. The re-try rate's idea match misses reworded repeats, so it is a lower bound.
   \item \textbf{Incomplete provenance.} $\splus$ credits surviving edits and evidence one hop away. It misses insights that shape later decisions without shared tokens, such as learning that an approach is a dead end; such turns receive weight $\lambda$.
-  \item \textbf{Teacher dependence.} Like AREX-2, the method imitates a teacher and can exceed the teacher's strategies only through generalization. A5 measures sensitivity but does not remove the dependence.
-  \item \textbf{Incomplete implementation.} The free-form summary baseline of A2, the repository crawler, canary-test generation, and the LLM-judge prompt for A1 are not yet implemented.
-  \item \textbf{Cost.} Collecting 8{,}000 rollouts of up to 12 hours each is expensive. Total GPU-hours and API cost will be reported with results.
+  \item \textbf{Incomplete implementation.} The free-form summary baseline of A2, the repository crawler, canary-test generation, and the LLM-judge prompt for A1 are not yet implemented, and the human-label check of the PALM rules (\cref{sec:palm}) has not been run.
 \end{itemize}
 
 % ===================================================================
 \section{Conclusion}
 % ===================================================================
 
-AREX-2 shows that training on long improvement trajectories is a promising route to agents that improve with more time. Building on that result requires a recipe others can run. Mk33 provides one: explicit environment filters and thresholds, a context manager that keeps failures visible for runs of any length and yields exact training windows, deterministic progress-aware loss masking, and a complete training configuration, each paired with an ablation and implemented in open code.
+AREX-2 shows that training on long improvement trajectories is a promising route to agents that improve with more time. Building on that result requires a recipe others can run. Mk33 provides one: explicit environment filters and thresholds, a context manager that keeps failures visible for runs of any length and yields exact training windows, deterministic progress-aware loss masking, and a complete training configuration, each paired with an ablation and implemented in tested, open code. Because the full recipe is expensive, every experiment also runs at a scale that fits one free GPU. At that scale, attention-based KV eviction preserved next-token quality best at equal memory, and keyword retrieval did not beat truncation. \pending{task-success, PALM vs.\ AREX-2, and long-run conclusions}
 
 \section*{Code Availability}
-The reference implementation, configuration files, and tests are available at \url{https://github.com/dulguuntsatsralt-cell/Mk33}.
+The reference implementation, configuration files, tests, and the notebooks and scripts for every experiment in \cref{sec:small} are available at \url{https://github.com/dulguuntsatsralt-cell/Mk33}. The raw results of the memory study are in \code{docs/mk33/results/}, and \code{scripts/mk33/paper\_figures.py} regenerates its figures.
 
 \section*{Acknowledgments}
-This work builds on the AREX-2 paper and its open-source evaluation suite. The author used an AI assistant to help draft text and code; the author reviewed the content and is responsible for it.
+Mk33 builds directly on the AREX-2 method of Qian et al.~\citep{qian2026arex2}. We thank the AREX-2 authors for describing their recipe in detail and for releasing their evaluation suite, which made this reference implementation possible. They were not involved in this work, and any errors in interpreting or extending their method are the author's own. The author used an AI assistant to help draft text and code; the author reviewed the content and is responsible for it.
 
 \bibliographystyle{plainnat}
 \bibliography{references}
