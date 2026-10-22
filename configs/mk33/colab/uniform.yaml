@@ -1,0 +1,7 @@
+inherit: palm.yaml
+name: colab_uniform
+description: "Ablation A1 at Colab scale: loss on every assistant turn (no PALM masking)."
+palm: {mode: all}
+sft:
+  train_files: [data/colab/windows_uniform.jsonl]
+  output_dir: checkpoints/colab_uniform

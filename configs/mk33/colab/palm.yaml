@@ -1,0 +1,44 @@
+inherit: ../default.yaml
+name: colab_palm
+description: >
+  First trained Mk33 model, sized for one free Colab T4: LoRA on Qwen2.5-1.5B-Instruct,
+  trained on teacher runs of the bench tasks (data seeds 1-3; evaluation uses seed 0).
+  Pairs with colab/uniform.yaml (ablation A1 at small scale): same data, same settings,
+  only the loss mask differs. Run by notebooks/mk33_train_palm.ipynb.
+
+# Contexts must match what `mk33 bench-run --window 8000 --modes rlc` builds at test time.
+rlc: {window: 8000, ledger_cap: 3000}
+rlc_train: {window: 8000, ledger_cap: 3000}
+
+# A 3B teacher rarely reaches the paper's 0.9 on these tasks; 0.5 keeps runs that got at
+# least halfway from the baseline to the reference and actually iterated.
+selection:
+  tau: {ml: 0.5, judge: 0.95}
+  min_rounds: 3
+  require_iteration: true
+  max_per_env: 2
+
+palm: {mode: palm, lam: 0.5}
+
+sft:
+  model: Qwen/Qwen2.5-1.5B-Instruct
+  train_files: [data/colab/windows_palm.jsonl]
+  output_dir: checkpoints/colab_palm
+  tools: [bash, read_file, edit_file, run_job, wait_job, submit]   # the bench agent's tools
+  max_len: 10240
+  learning_rate: 2.0e-4      # LoRA
+  min_lr_ratio: 0.1
+  warmup_ratio: 0.05
+  weight_decay: 0.0
+  epochs: 3
+  global_batch: 8
+  micro_batch: 1
+  bf16: false
+  dtype: float16             # T4: no fast bfloat16
+  attn_implementation: sdpa  # T4: no flash attention
+  deepspeed: ""
+  gradient_checkpointing: true
+  lora: {r: 16, alpha: 32, dropout: 0.05, target_modules: all-linear}
+  merge_lora: true
+  save_strategy: "no"
+  logging_steps: 5

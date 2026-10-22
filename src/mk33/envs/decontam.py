@@ -85,7 +85,7 @@ class BenchmarkIndex:
     @classmethod
     def from_jsonl(cls, path: str | Path, **kw) -> "BenchmarkIndex":
         tasks = []
-        for line in Path(path).read_text().splitlines():
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
             if line.strip():
                 tasks.append(BenchmarkTask(**json.loads(line)))
         return cls(tasks, **kw)

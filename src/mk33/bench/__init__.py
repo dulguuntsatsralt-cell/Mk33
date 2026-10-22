@@ -8,13 +8,14 @@ See docs/mk33/BENCH.md.
 """
 
 from .prepare import PreparedEnv, prepare
-from .report import summarize, write_report
+from .report import collect_trajectories, compare_dirs, render_comparison, summarize, write_report
 from .run import BenchConfig, RetryingClient, best_so_far_curve, run_grid, run_one
 from .tasks import TASKS, TASKS_BY_ID, BenchTask
 
 __all__ = [
     "TASKS", "TASKS_BY_ID", "BenchTask", "PreparedEnv", "prepare", "BenchConfig", "RetryingClient",
     "best_so_far_curve", "run_grid", "run_one", "summarize", "write_report", "SubmitOnlyClient",
+    "collect_trajectories", "compare_dirs", "render_comparison",
 ]
 
 

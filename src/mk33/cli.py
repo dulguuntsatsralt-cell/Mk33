@@ -12,6 +12,9 @@
     mk33 bench-prepare  build the small CPU-only bench environments
     mk33 bench-run      run the agent on them (any OpenAI-compatible model)
     mk33 bench-report   summarize bench results
+    mk33 bench-collect  gather trajectories of finished bench runs (teacher data)
+    mk33 bench-compare  compare several models' bench results, paired by task and repeat
+    mk33 ask         answer a question with web search (any OpenAI-compatible model)
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ DEFAULT_CONFIG = "configs/mk33/default.yaml"
 
 
 def _read_jsonl(path: str) -> list[dict]:
-    return [json.loads(l) for l in Path(path).read_text().splitlines() if l.strip()]
+    return [json.loads(l) for l in Path(path).read_text(encoding="utf-8").splitlines() if l.strip()]
 
 
 def _write_jsonl(rows, path: str) -> None:
@@ -70,7 +73,12 @@ def cmd_rollout(a) -> int:
     cfg = load_config(a.config)
     env = EnvSpec.load(a.env)
     sandbox = DockerSandbox(env.workspace_dir, a.sandbox_image) if a.sandbox_image else LocalSandbox(env.workspace_dir)
-    ex = ToolExecutor(env, sandbox, IsolatedScorer(env), cfg.tools)
+    search = fetch = None
+    if a.web:
+        from .web import make_fetch, make_search
+
+        search, fetch = make_search(a.web), make_fetch()
+    ex = ToolExecutor(env, sandbox, IsolatedScorer(env), cfg.tools, search=search, fetch=fetch)
     client = OpenAIChatClient(a.model, a.base_url, temperature=a.temperature)
     budget = cfg.budget.get(env.domain, Budget())
     try:
@@ -280,7 +288,54 @@ def cmd_bench_report(a) -> int:
     from .bench import write_report
 
     write_report(a.out)
-    print((Path(a.out) / "report.md").read_text())
+    print((Path(a.out) / "report.md").read_text(encoding="utf-8"))
+    return 0
+
+
+def cmd_bench_collect(a) -> int:
+    from .bench import collect_trajectories
+
+    counts = collect_trajectories(a.out, a.to, require_audit=not a.include_flagged)
+    print(json.dumps(counts))
+    return 0
+
+
+def cmd_bench_compare(a) -> int:
+    from .bench import compare_dirs, render_comparison
+
+    dirs = dict(item.split("=", 1) for item in a.runs.split(","))
+    c = compare_dirs(dirs, mode=a.mode)
+    text = render_comparison(c)
+    if a.save:
+        Path(a.save).write_text(text, encoding="utf-8")
+        Path(a.save).with_suffix(".json").write_text(json.dumps(c, indent=2), encoding="utf-8")
+    print(text)
+    return 0
+
+
+def cmd_ask(a) -> int:
+    from .llm import OpenAIChatClient
+    from .research import ask
+    from .web import make_fetch, make_search
+
+    search = make_search(a.web)
+    client = OpenAIChatClient(a.model, a.base_url, api_key_env=a.api_key_env, temperature=a.temperature,
+                              max_tokens=a.max_tokens, timeout=a.timeout)
+    print(f"searching with {search.provider}...", file=sys.stderr)
+    log = (lambda m: print(m, file=sys.stderr)) if not a.quiet else None
+    r = ask(a.question, client, search, make_fetch(), max_tool_calls=a.max_tool_calls,
+            max_minutes=a.max_minutes, window=a.window, log=log)
+    if a.out and r.trajectory is not None:
+        r.trajectory.dump(a.out)
+    if r.answer is None:
+        print(f"no answer (stopped: {r.stop}, {r.turns} steps)")
+        return 1
+    print(r.answer)
+    if r.confidence is not None:
+        print(f"confidence: {r.confidence:.2f}")
+    for e in r.evidence:
+        print(f"source: {e}")
+    print(f"({r.searches} searches, {r.fetches} pages read, {r.turns} steps)", file=sys.stderr)
     return 0
 
 
@@ -298,7 +353,9 @@ def main(argv: list[str] | None = None) -> int:
 
     add("filter", cmd_filter, envs={"required": True}, benchmarks={}, out={"required": True})
     add("rollout", cmd_rollout, env={"required": True}, model={"required": True}, base_url={},
-        temperature={"type": float, "default": 0.7}, sandbox_image={}, out={"required": True})
+        temperature={"type": float, "default": 0.7}, sandbox_image={}, out={"required": True},
+        web={"choices": ["auto", "duckduckgo", "tavily", "brave"],
+             "help": "enable web_search/web_fetch with this search provider"})
     add("audit", cmd_audit, envs={"required": True}, trajs={"required": True}, out={"required": True})
     add("select", cmd_select, trajs={"required": True}, audits={}, out={"required": True})
     add("weights", cmd_weights, trajs={"required": True}, labels={}, out={"required": True})
@@ -339,6 +396,20 @@ def main(argv: list[str] | None = None) -> int:
         kv_text_window={"type": int, "default": 32000,
                         "help": "kv modes: text history limit (the model's context length)"})
     add("bench-report", cmd_bench_report, out={"default": "bench/results"})
+    add("bench-collect", cmd_bench_collect, out={"default": "bench/results"}, to={"required": True},
+        include_flagged={"action": "store_true", "help": "keep runs the process audit flagged"})
+    add("bench-compare", cmd_bench_compare,
+        runs={"required": True, "help": "name=dir pairs, e.g. base=r/base,palm=r/palm"},
+        mode={"help": "context mode to compare (default: the one mode all dirs share, else rlc)"},
+        save={"help": "write the markdown table here (and .json next to it)"})
+    add("ask", cmd_ask, model={"required": True}, base_url={}, api_key_env={"default": "MODEL_API_KEY"},
+        web={"default": "auto", "choices": ["auto", "duckduckgo", "tavily", "brave"],
+             "help": "search provider (auto: Tavily or Brave if their key is set, else DuckDuckGo)"},
+        temperature={"type": float, "default": 0.3}, max_tokens={"type": int, "default": 2048},
+        timeout={"type": float, "default": 300.0}, max_tool_calls={"type": int, "default": 30},
+        max_minutes={"type": float, "default": 20}, window={"type": int, "default": 24000},
+        out={"help": "save the full trajectory (JSON) here"}, quiet={"action": "store_true"})
+    sub.choices["ask"].add_argument("question")
 
     a = p.parse_args(argv)
     return a.fn(a)

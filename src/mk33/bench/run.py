@@ -42,6 +42,7 @@ from ..llm import ChatClient
 from ..metrics import process_metrics
 from ..scaffold import (MODES, SYSTEM_PROMPT, Agent, AgentConfig, Budget, LocalSandbox, RLCConfig, ToolConfig,
                         ToolExecutor)
+from ..scaffold.sandbox import shell_note
 from ..trajectory import Trajectory
 
 BENCH_TOOLS = ["bash", "read_file", "edit_file", "run_job", "wait_job", "submit"]
@@ -202,7 +203,7 @@ def run_one(env: EnvSpec, mode: str, rep: int, cfg: BenchConfig, client: ChatCli
     run_dir = out / "runs" / env.env_id / mode / f"rep{rep}"
     result_path = run_dir / "result.json"
     if result_path.exists() and not cfg.force:
-        row = json.loads(result_path.read_text())
+        row = json.loads(result_path.read_text(encoding="utf-8"))
         if not row.get("error"):
             return row
     if run_dir.exists():
@@ -218,7 +219,8 @@ def run_one(env: EnvSpec, mode: str, rep: int, cfg: BenchConfig, client: ChatCli
     agent_cfg = AgentConfig(
         budget=Budget(max_tool_calls=cfg.max_tool_calls, max_wall_s=cfg.max_wall_s, max_rounds=cfg.max_rounds),
         rlc=cfg.rlc_for(mode),
-        system_prompt=SYSTEM_PROMPT + ("\n\n/no_think" if cfg.no_think else ""),
+        system_prompt=SYSTEM_PROMPT + (f"\n\n{note}" if (note := shell_note(sandbox)) else "")
+        + ("\n\n/no_think" if cfg.no_think else ""),
     )
     row: dict[str, Any] = {"env_id": env.env_id, "task": env.metadata.get("task"), "mode": mode, "rep": rep,
                            "model": model, "error": None}
@@ -265,7 +267,7 @@ def run_one(env: EnvSpec, mode: str, rep: int, cfg: BenchConfig, client: ChatCli
             "audit_flags": [f"{f.check}@{f.turn}: {f.detail}"[:200] for f in rep_audit.flags],
         })
     run_dir.mkdir(parents=True, exist_ok=True)
-    result_path.write_text(json.dumps(row, indent=2))
+    result_path.write_text(json.dumps(row, indent=2), encoding="utf-8")
     return row
 
 
@@ -273,7 +275,7 @@ def run_grid(envs: list[EnvSpec], cfg: BenchConfig, client_factory: Callable[[],
              out: str | Path, model: str, log: Callable[[str], None] = print) -> list[dict[str, Any]]:
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    (out / "bench_config.json").write_text(json.dumps({"model": model, **asdict(cfg)}, indent=2))
+    (out / "bench_config.json").write_text(json.dumps({"model": model, **asdict(cfg)}, indent=2), encoding="utf-8")
     jobs = [(e, m, r) for r in range(cfg.repeats) for e in envs for m in cfg.modes]
     rows: list[dict[str, Any]] = []
     lock = threading.Lock()

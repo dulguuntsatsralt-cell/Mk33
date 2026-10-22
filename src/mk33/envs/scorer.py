@@ -12,6 +12,7 @@ last non-empty line of stdout, e.g. ``{"score": 0.873}``.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -96,7 +97,8 @@ class IsolatedScorer:
             try:
                 proc = subprocess.run(
                     self._command(snap), cwd=cwd, capture_output=True, text=True,
-                    timeout=self.spec.timeout_s,
+                    encoding="utf-8", errors="replace", timeout=self.spec.timeout_s,
+                    env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
                 )
             except subprocess.TimeoutExpired:
                 return ScoreResult(False, None, None, "scorer timed out", "TimeoutExpired")

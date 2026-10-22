@@ -6,7 +6,14 @@ Tokenization renders each window with the model's chat template. Assistant messa
 tokens get the message's PALM weight; everything else gets weight 0. The loss is
 normalized by the weighted token count of the batch.
 
-torch / transformers are imported lazily so the rest of the package works without them.
+Two setups share this code:
+
+* the paper's full-scale run (27B, bfloat16, DeepSpeed ZeRO-3, flash attention), and
+* a small run that fits one free Colab T4 (``configs/mk33/colab/``): LoRA on a 1.5B model,
+  float16, SDPA attention, and the loss computed only at weighted positions so the
+  vocabulary-sized logits are never materialized for the whole window.
+
+torch / transformers / peft are imported lazily so the rest of the package works without them.
 """
 
 from __future__ import annotations
@@ -30,6 +37,9 @@ def message_token_weights(
     exact for any template. Windows longer than ``max_len`` keep their head (the
     compacted prefix) and are cut at the end.
     """
+    from ..chat import template_messages
+
+    messages = template_messages(messages)  # same rendering as the local inference client
     ids: list[int] = []
     tw: list[float] = []
     prev_text = ""
@@ -63,6 +73,42 @@ def weighted_lm_loss(logits, labels, token_weights):
     return (nll * shift_w).sum() / denom
 
 
+def loss_positions(token_weights):
+    """Sequence positions whose logits predict a weighted token (batch of one)."""
+    import torch
+
+    return torch.nonzero(token_weights[0, 1:] > 0, as_tuple=False).flatten()
+
+
+def palm_loss(model, input_ids, attention_mask, labels, token_weights):
+    """``weighted_lm_loss`` without building logits for every position.
+
+    Most tokens in a window are context (weight 0). With a batch of one, only the
+    positions that predict a weighted token are passed through the LM head, via
+    ``logits_to_keep``; on a 1.5B model and an 8K window this cuts the logits from about
+    5 GB to a few hundred MB. Falls back to full logits for batches larger than one or
+    models that do not support ``logits_to_keep``. Both paths give the same value.
+    """
+    import torch
+    import torch.nn.functional as F
+
+    if input_ids.size(0) == 1:
+        pos = loss_positions(token_weights)
+        if pos.numel() == 0:  # nothing to learn in this window
+            return (model.get_input_embeddings().weight.sum() * 0.0)
+        try:
+            out = model(input_ids=input_ids, attention_mask=attention_mask, logits_to_keep=pos)
+        except TypeError:
+            out = None
+        if out is not None and out.logits.size(1) == pos.numel():
+            tgt = labels[0, pos + 1]
+            w = token_weights[0, pos + 1].float()
+            nll = F.cross_entropy(out.logits[0].float(), tgt, reduction="none", ignore_index=-100)
+            return (nll * w).sum() / w.sum().clamp_min(torch.finfo(torch.float32).eps)
+    out = model(input_ids=input_ids, attention_mask=attention_mask)
+    return weighted_lm_loss(out.logits, labels, token_weights)
+
+
 # ------------------------------------------------------------------- config
 @dataclass
 class SFTConfig:
@@ -84,12 +130,26 @@ class SFTConfig:
     deepspeed: str | None = "configs/mk33/deepspeed_zero3.json"
     seed: int = 0
     gradient_checkpointing: bool = True
+    dtype: str = ""  # "bfloat16", "float16" or "float32"; "" = bfloat16 if bf16 else float32
+    attn_implementation: str = "flash_attention_2"  # "sdpa" on GPUs without flash attention (T4)
+    # Tools rendered into the chat template. Must match what the agent sends at inference
+    # (the bench sends only its six tools); empty = every tool in TOOL_SCHEMAS.
+    tools: list[str] = field(default_factory=list)
+    # LoRA, e.g. {r: 16, alpha: 32, dropout: 0.05, target_modules: all-linear}; empty = full fine-tune.
+    lora: dict[str, Any] = field(default_factory=dict)
+    merge_lora: bool = True  # also save base + adapter merged into output_dir/merged (loadable by bench-run)
+    save_strategy: str = "epoch"
+    logging_steps: int = 1
+
+    @property
+    def torch_dtype_name(self) -> str:
+        return self.dtype or ("bfloat16" if self.bf16 else "float32")
 
 
 def load_windows(paths: list[str]) -> list[TrainingWindow]:
     out = []
     for p in paths:
-        for line in Path(p).read_text().splitlines():
+        for line in Path(p).read_text(encoding="utf-8").splitlines():
             if line.strip():
                 out.append(TrainingWindow(**json.loads(line)))
     return out
@@ -105,7 +165,11 @@ def train(cfg: SFTConfig) -> None:  # pragma: no cover - needs GPUs
 
     tok = AutoTokenizer.from_pretrained(cfg.model)
     windows = load_windows(cfg.train_files)
-    tools = list(TOOL_SCHEMAS.values())  # same tool list the agent sends at inference
+    unknown = [t for t in cfg.tools if t not in TOOL_SCHEMAS]
+    if unknown:
+        raise ValueError(f"unknown tools in sft.tools: {unknown}")
+    # Same tool list, in the same order, as the agent sends at inference.
+    tools = [TOOL_SCHEMAS[t] for t in cfg.tools] if cfg.tools else list(TOOL_SCHEMAS.values())
 
     class WindowDataset(Dataset):
         def __len__(self):
@@ -131,24 +195,66 @@ def train(cfg: SFTConfig) -> None:  # pragma: no cover - needs GPUs
 
     class PALMTrainer(Trainer):
         def compute_loss(self, model, inputs, return_outputs=False, **kw):
-            tw = inputs.pop("token_weights")
-            labels = inputs.pop("labels")
-            out = model(**inputs)
-            loss = weighted_lm_loss(out.logits, labels, tw)
-            return (loss, out) if return_outputs else loss
+            loss = palm_loss(model, inputs["input_ids"], inputs["attention_mask"], inputs["labels"],
+                             inputs["token_weights"])
+            return (loss, None) if return_outputs else loss
 
+    dtype_name = cfg.torch_dtype_name
     world = max(torch.cuda.device_count(), 1)
     accum = max(cfg.global_batch // (cfg.micro_batch * world), 1)
     args = TrainingArguments(
         output_dir=cfg.output_dir, per_device_train_batch_size=cfg.micro_batch,
         gradient_accumulation_steps=accum, learning_rate=cfg.learning_rate,
         lr_scheduler_type="cosine_with_min_lr", lr_scheduler_kwargs={"min_lr_rate": cfg.min_lr_ratio},
-        warmup_ratio=cfg.warmup_ratio, weight_decay=cfg.weight_decay,
+        **warmup_kwargs(TrainingArguments, cfg.warmup_ratio), weight_decay=cfg.weight_decay,
         adam_beta1=cfg.adam_beta1, adam_beta2=cfg.adam_beta2, num_train_epochs=cfg.epochs,
-        max_grad_norm=cfg.max_grad_norm, bf16=cfg.bf16, deepspeed=cfg.deepspeed, seed=cfg.seed,
-        gradient_checkpointing=cfg.gradient_checkpointing, logging_steps=1, save_strategy="epoch",
-        remove_unused_columns=False, report_to=["none"],
+        max_grad_norm=cfg.max_grad_norm, bf16=dtype_name == "bfloat16", fp16=dtype_name == "float16",
+        deepspeed=cfg.deepspeed or None, seed=cfg.seed,
+        gradient_checkpointing=cfg.gradient_checkpointing, logging_steps=cfg.logging_steps,
+        save_strategy=cfg.save_strategy, remove_unused_columns=False, report_to=["none"],
     )
-    model = AutoModelForCausalLM.from_pretrained(cfg.model, torch_dtype=torch.bfloat16,
-                                                 attn_implementation="flash_attention_2")
-    PALMTrainer(model=model, args=args, train_dataset=WindowDataset(), data_collator=collate).train()
+    model = AutoModelForCausalLM.from_pretrained(cfg.model, torch_dtype=getattr(torch, dtype_name),
+                                                 attn_implementation=cfg.attn_implementation)
+    if cfg.lora:
+        model = add_lora(model, cfg.lora, gradient_checkpointing=cfg.gradient_checkpointing)
+    trainer = PALMTrainer(model=model, args=args, train_dataset=WindowDataset(), data_collator=collate)
+    trainer.train()
+    trainer.save_model(cfg.output_dir)
+    tok.save_pretrained(cfg.output_dir)
+    if cfg.lora and cfg.merge_lora:
+        merged_dir = Path(cfg.output_dir) / "merged"
+        merged = trainer.model.merge_and_unload()
+        merged.to(getattr(torch, dtype_name)).save_pretrained(merged_dir)
+        tok.save_pretrained(merged_dir)
+        print(f"merged model saved to {merged_dir}")
+
+
+def warmup_kwargs(training_args_cls, ratio: float) -> dict[str, float]:
+    """transformers < 5 takes ``warmup_ratio``; 5.x dropped it and reads a float
+    ``warmup_steps`` in [0, 1) as a ratio of total steps."""
+    import inspect
+
+    if "warmup_ratio" in inspect.signature(training_args_cls.__init__).parameters:
+        return {"warmup_ratio": ratio}
+    return {"warmup_steps": float(ratio)}
+
+
+def add_lora(model, lora: dict[str, Any], gradient_checkpointing: bool = True):  # pragma: no cover - needs peft
+    """Wrap ``model`` with LoRA adapters. Adapter weights are kept in float32 so mixed
+    precision training on a float16 base model (T4) does not try to unscale fp16 grads."""
+    import torch
+    from peft import LoraConfig, get_peft_model
+
+    if gradient_checkpointing:
+        model.enable_input_require_grads()  # checkpointing needs grads at the (frozen) embeddings
+    conf = LoraConfig(
+        r=int(lora.get("r", 16)), lora_alpha=int(lora.get("alpha", 32)),
+        lora_dropout=float(lora.get("dropout", 0.05)),
+        target_modules=lora.get("target_modules", "all-linear"), task_type="CAUSAL_LM",
+    )
+    model = get_peft_model(model, conf)
+    for p in model.parameters():
+        if p.requires_grad:
+            p.data = p.data.to(torch.float32)
+    model.print_trainable_parameters()
+    return model
