@@ -48,3 +48,38 @@ def test_unchanged_resubmission_is_scored_and_noted(toy_env):
     ex.call("edit_file", {"path": "solution.py", "old_str": "VALUE = 0", "new_str": "VALUE = 40"})
     changed = ex.call("submit", {"hypothesis": "closer value", "lesson": "edited"})
     assert "identical" not in changed.observation
+
+
+# ------------------------------------------------------------- edit_file
+def test_empty_old_str_rewrites_an_existing_file(toy_env):
+    """What the 7B model in the laptop pilot tried: replace the whole solution."""
+    ex = executor(toy_env)
+    r = ex.call("edit_file", {"path": "solution.py", "old_str": "", "new_str": "VALUE = 41\n"})
+    assert "+VALUE = 41" in r.observation and r.diff
+    assert "VALUE = 41" in ex.call("read_file", {"path": "solution.py"}).observation
+
+
+def test_edit_matches_despite_copied_line_numbers_and_trailing_spaces(toy_env, tmp_path):
+    ex = executor(toy_env)
+    ex.call("edit_file", {"path": "solution.py", "old_str": "", "new_str": "A = 1\nVALUE = 0   \nB = 2\n"})
+    r = ex.call("edit_file", {"path": "solution.py", "old_str": "2\tVALUE = 0", "new_str": "VALUE = 42"})
+    assert "ignoring line numbers" in r.observation
+    text = ex.call("read_file", {"path": "solution.py"}).observation
+    assert "VALUE = 42" in text and "A = 1" in text and "B = 2" in text
+
+
+def test_edit_errors_say_what_to_do(toy_env):
+    ex = executor(toy_env)
+    missing = ex.call("edit_file", {"path": "solution.py", "old_str": "NOT THERE", "new_str": "x"}).observation
+    assert "not found" in missing and "empty old_str" in missing
+    ex.call("edit_file", {"path": "solution.py", "old_str": "", "new_str": "X = 1\nX = 1\n"})
+    twice = ex.call("edit_file", {"path": "solution.py", "old_str": "X = 1", "new_str": "Y"}).observation
+    assert "matches 2 places" in twice
+    assert "[no such file" in ex.call("edit_file", {"path": "nope.py", "old_str": "a", "new_str": "b"}).observation
+
+
+def test_ambiguous_lenient_match_is_refused(toy_env):
+    ex = executor(toy_env)
+    ex.call("edit_file", {"path": "solution.py", "old_str": "", "new_str": "x = 1  \nx = 1\t\n"})
+    r = ex.call("edit_file", {"path": "solution.py", "old_str": "x = 1", "new_str": "y"}).observation
+    assert "matches 2 places" in r  # exact count first: two exact substring hits

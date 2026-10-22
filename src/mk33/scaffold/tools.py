@@ -15,6 +15,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -42,8 +43,9 @@ TOOL_SCHEMAS = {
     "read_file": _schema("read_file", "Read a file (optionally a line range).",
                          {"path": {"type": "string"}, "start": {"type": "integer"},
                           "end": {"type": "integer"}}, ["path"]),
-    "edit_file": _schema("edit_file", "Replace old_str with new_str in a file. Empty old_str with a "
-                         "missing file creates it with new_str.",
+    "edit_file": _schema("edit_file", "Replace old_str with new_str in a file. old_str must match one "
+                         "place in the file (copy it from read_file without the line numbers). An empty "
+                         "old_str replaces the whole file with new_str, or creates the file.",
                          {"path": {"type": "string"}, "old_str": {"type": "string"},
                           "new_str": {"type": "string"}}, ["path", "old_str", "new_str"]),
     "run_job": _schema("run_job", "Start a long command in the background. Returns a job id.",
@@ -119,6 +121,32 @@ def snapshot_text_files(root: Path, max_bytes: int) -> dict[str, str]:
         if p.suffix in TEXT_SUFFIXES and p.stat().st_size <= max_bytes:
             out[p.relative_to(root).as_posix()] = p.read_text(encoding="utf-8", errors="replace")
     return out
+
+
+_LINE_NO = re.compile(r"^\s*\d+\t")
+
+
+def lenient_replace(text: str, old: str, new: str) -> str | None:
+    """Replace ``old`` with ``new`` comparing whole lines, ignoring trailing whitespace and
+    the ``N<tab>`` prefixes that ``read_file`` adds (models often copy them). Returns None
+    unless exactly one place matches, so an ambiguous edit is never guessed."""
+    old_lines = old.strip("\n").split("\n")
+    if all(_LINE_NO.match(l) for l in old_lines if l.strip()):
+        old_lines = [_LINE_NO.sub("", l, count=1) for l in old_lines]
+    want = [l.rstrip() for l in old_lines]
+    if not any(want):
+        return None
+    lines = text.split("\n")
+    have = [l.rstrip() for l in lines]
+    k = len(want)
+    hits = [i for i in range(len(have) - k + 1) if have[i:i + k] == want]
+    if len(hits) != 1:
+        return None
+    i = hits[0]
+    new_lines = new.strip("\n").split("\n")
+    if all(_LINE_NO.match(l) for l in new_lines if l.strip()) and any(l.strip() for l in new_lines):
+        new_lines = [_LINE_NO.sub("", l, count=1) for l in new_lines]
+    return "\n".join(lines[:i] + new_lines + lines[i + k:])
 
 
 def solution_fingerprint(files: dict[str, str]) -> str | None:
@@ -211,18 +239,31 @@ class ToolExecutor:
 
     def _t_edit_file(self, path: str, old_str: str, new_str: str) -> ToolResult:
         p = self._resolve(path)
+        note = ""
         if not p.exists():
             if old_str:
-                return ToolResult(f"[no such file: {path}]")
+                return ToolResult(f"[no such file: {path}. To create it, call edit_file with an empty old_str.]")
             before = ""
             p.parent.mkdir(parents=True, exist_ok=True)
             after = new_str
         else:
             before = p.read_text(encoding="utf-8", errors="replace")
-            n = before.count(old_str) if old_str else 0
-            if n != 1:
-                return ToolResult(f"[old_str must match exactly once; matched {n} times]")
-            after = before.replace(old_str, new_str, 1)
+            if not old_str:
+                after = new_str  # whole-file rewrite
+            else:
+                n = before.count(old_str)
+                if n == 1:
+                    after = before.replace(old_str, new_str, 1)
+                elif n > 1:
+                    return ToolResult(f"[old_str matches {n} places in {path}; include more surrounding "
+                                      f"lines so it matches exactly one.]")
+                else:
+                    after = lenient_replace(before, old_str, new_str)
+                    if after is None:
+                        return ToolResult(f"[old_str was not found in {path}. Copy it exactly from read_file "
+                                          f"output, without the line numbers, or pass an empty old_str to "
+                                          f"replace the whole file.]")
+                    note = "\n[note: matched after ignoring line numbers and trailing whitespace]"
         p.write_text(after, encoding="utf-8")
         rel = p.relative_to(self.workspace).as_posix()
         diff = "".join(difflib.unified_diff(
@@ -230,7 +271,7 @@ class ToolExecutor:
             fromfile=f"a/{rel}", tofile=f"b/{rel}",
         ))
         self._round_diffs.append(diff)
-        return ToolResult(diff or "[no change]", diff=diff or None)
+        return ToolResult((diff or "[no change]") + note, diff=diff or None)
 
     def _t_run_job(self, command: str) -> ToolResult:
         jid = self.sandbox.start_job(command)
