@@ -72,7 +72,7 @@ def test_small_scale_training_end_to_end(tmp_path, monkeypatch):
     for arm in ("palm", "uniform"):
         assert main(["build-sft", "--config", f"configs/mk33/colab/{arm}.yaml", "--trajs", str(tmp_path / "trajs.jsonl"),
                      "--out", str(tmp_path / f"windows_{arm}.jsonl")]) == 0
-    win = lambda arm: [json.loads(l) for l in (tmp_path / f"windows_{arm}.jsonl").read_text().splitlines()]
+    win = lambda arm: [json.loads(l) for l in (tmp_path / f"windows_{arm}.jsonl").read_text(encoding="utf-8").splitlines()]
     palm_w = [w for row in win("palm") for w in row["weights"] if w is not None]
     uni_w = [w for row in win("uniform") for w in row["weights"] if w is not None]
     assert len(palm_w) == len(uni_w) and set(uni_w) == {1.0}  # same turns, different weights
@@ -92,7 +92,7 @@ def test_small_scale_training_end_to_end(tmp_path, monkeypatch):
           global_batch: 2
           gradient_checkpointing: false
           lora: {{r: 4, alpha: 8, dropout: 0.0, target_modules: all-linear}}
-    """))
+    """), encoding="utf-8")
     assert main(["train", "--config", str(cfg)]) == 0
 
     merged = tmp_path / "ckpt" / "merged"

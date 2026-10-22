@@ -74,7 +74,7 @@ def test_normalization_matches_paper(envs, tmp_path):
     """Baseline scores 0; the exact DP scores the knapsack ceiling, above the reference."""
     _, prepared = envs
     env = next(p.env for p in prepared if p.env.metadata["task"] == "knapsack")
-    (tmp_path / "solution.py").write_text(STRONG_KNAPSACK)
+    (tmp_path / "solution.py").write_text(STRONG_KNAPSACK, encoding="utf-8")
     r = IsolatedScorer(env).score(tmp_path)
     assert r.ok and r.score == pytest.approx(0.0, abs=1e-12)
     assert r.normalized > 1.0
@@ -131,7 +131,7 @@ def test_small_window_forces_compaction_in_both_modes(envs, tmp_path):
     by_mode = {r["mode"]: r for r in rows}
     assert by_mode["rlc"]["compactions"] > 0
     assert by_mode["truncate"]["compactions"] > 0
-    traj = json.loads((tmp_path / "runs/bench-knapsack/rlc/rep0/trajectory.json").read_text())
+    traj = json.loads((tmp_path / "runs/bench-knapsack/rlc/rep0/trajectory.json").read_text(encoding="utf-8"))
     assert traj["metadata"]["rlc"]["mode"] == "rlc"
 
 
@@ -147,7 +147,7 @@ def test_runs_resume_and_report(envs, tmp_path):
     assert len(rows) == 16 and all(r["best"] == 0.0 for r in rows)
     s = write_report(tmp_path)
     assert s["paired"] and not s["paired"][0]["significant"]
-    md = (tmp_path / "report.md").read_text()
+    md = (tmp_path / "report.md").read_text(encoding="utf-8")
     assert "rlc − truncate" in md and (tmp_path / "curves.csv").exists()
 
 

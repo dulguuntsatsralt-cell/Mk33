@@ -28,9 +28,9 @@ def toy_env(tmp_path: Path) -> EnvSpec:
     sc = tmp_path / "scorer"
     (sc / "heldout").mkdir(parents=True)
     ws.mkdir()
-    (ws / "solution.py").write_text("VALUE = 0\n")
-    (sc / "heldout" / "target.txt").write_text("42")
-    (sc / "score.py").write_text(SCORE_PY)
+    (ws / "solution.py").write_text("VALUE = 0\n", encoding="utf-8")
+    (sc / "heldout" / "target.txt").write_text("42", encoding="utf-8")
+    (sc / "score.py").write_text(SCORE_PY, encoding="utf-8")
     return EnvSpec(
         env_id="toy", domain="ml", source="https://github.com/example/toy@abc",
         task_statement="Set VALUE in solution.py to maximize the score.",

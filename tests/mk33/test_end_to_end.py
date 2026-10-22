@@ -115,9 +115,9 @@ def test_cli_offline_pipeline(toy_env, tmp_path, capsys):
 
     traj, _, _ = run_agent(toy_env, window=128000)
     tj = tmp_path / "trajs.jsonl"
-    tj.write_text(json.dumps(traj.to_dict()) + "\n")
+    tj.write_text(json.dumps(traj.to_dict()) + "\n", encoding="utf-8")
     envs = tmp_path / "envs.jsonl"
-    envs.write_text(json.dumps(toy_env.to_dict()) + "\n")
+    envs.write_text(json.dumps(toy_env.to_dict()) + "\n", encoding="utf-8")
     cfgp = "configs/mk33/default.yaml"
     assert main(["filter", "--config", cfgp, "--envs", str(envs), "--out", str(tmp_path / "kept.jsonl")]) == 0
     assert main(["audit", "--config", cfgp, "--envs", str(envs), "--trajs", str(tj),

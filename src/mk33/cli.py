@@ -339,7 +339,20 @@ def cmd_ask(a) -> int:
     return 0
 
 
+def _safe_console() -> None:
+    """Windows consoles and pipes may use a legacy code page; print UTF-8 instead of crashing
+    on characters like the minus sign in reports or non-English text in agent output."""
+    for stream in (sys.stdout, sys.stderr):
+        enc = (getattr(stream, "encoding", None) or "").lower().replace("-", "")
+        if enc != "utf8" and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _safe_console()
     p = argparse.ArgumentParser(prog="mk33", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)

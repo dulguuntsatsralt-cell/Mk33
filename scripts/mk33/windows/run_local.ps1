@@ -63,4 +63,4 @@ if (-not $Full) {
 }
 
 Write-Host "== Done. Report:"
-Get-Content (Join-Path $Out "report.md")
+Get-Content -Encoding UTF8 (Join-Path $Out "report.md")
