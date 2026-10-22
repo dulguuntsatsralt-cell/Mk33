@@ -29,7 +29,8 @@ cd Mk33
 powershell -ExecutionPolicy Bypass -File scripts\mk33\windows\run_local.ps1
 ```
 
-The script makes a virtual environment, installs Mk33, runs a few tests, downloads
+The script makes a virtual environment, installs Mk33 plus numpy and scikit-learn (preinstalled on Kaggle and
+Colab, so the bench tasks are the same on every platform), runs a few tests, downloads
 Qwen2.5-3B (about 2 GB), and starts a short pilot run.
 
 ## 2. The model

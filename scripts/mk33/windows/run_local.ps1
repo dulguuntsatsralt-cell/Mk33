@@ -35,6 +35,9 @@ if (-not (Test-Path .venv)) { python -m venv .venv }
 & .\.venv\Scripts\Activate.ps1
 python -m pip install -q --upgrade pip
 python -m pip install -q -e ".[mk33,dev]"; Check "pip install"
+# numpy and scikit-learn come preinstalled on Kaggle and Colab. Installing them here keeps the
+# bench tasks the same on every platform (the scorer runs solutions with this Python).
+python -m pip install -q numpy scikit-learn; Check "pip install numpy scikit-learn"
 
 Write-Host "== 3. Quick tests"
 python -m pytest tests/mk33/test_sandbox.py tests/mk33/test_end_to_end.py -q; Check "tests"
