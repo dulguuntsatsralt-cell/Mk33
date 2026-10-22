@@ -129,6 +129,9 @@ Colab T4 with each memory method (`truncate`, `rlc`, `retrieve`, `kv:full`, `kv:
 compares final scores with paired bootstrap intervals. The grid takes several Colab sessions; results are saved to
 Google Drive and runs resume where they stopped.
 
+Both GPU experiments also run on Kaggle, which gives about 30 free GPU hours per week and background runs of up to
+12 hours: [`notebooks/kaggle/`](notebooks/kaggle/), guide in [docs/mk33/KAGGLE.md](docs/mk33/KAGGLE.md).
+
 ## First trained model: PALM vs uniform masking
 
 `notebooks/mk33_train_palm.ipynb` runs ablation A1 at a scale that fits one T4: a teacher solves training versions of
