@@ -258,6 +258,7 @@ def run_one(env: EnvSpec, mode: str, rep: int, cfg: BenchConfig, client: ChatCli
             "mean_gain": m.mean_gain,
             "recovery_rate": m.recovery_rate,
             "wasted_turn_share": m.wasted_turn_share,
+            "retry_rate": m.retry_rate,
             "auc_rounds": sum(curve) / len(curve) if curve else 0.0,
             "curve": curve,
             "turns": len(traj.turns),

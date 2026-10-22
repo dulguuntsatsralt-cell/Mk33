@@ -111,18 +111,24 @@ def test_colab_configs_match_the_bench_agent():
 
     palm = load_config("configs/mk33/colab/palm.yaml")
     uniform = load_config("configs/mk33/colab/uniform.yaml")
+    arex = load_config("configs/mk33/colab/arex.yaml")
     bench = BenchConfig(window=8000).rlc_for("rlc")
-    for cfg in (palm, uniform):
+    for cfg in (palm, uniform, arex):
         assert cfg.sft.tools == BENCH_TOOLS
         assert cfg.rlc_train == bench
         assert cfg.sft.lora and cfg.sft.dtype == "float16" and cfg.sft.attn_implementation == "sdpa"
         assert not cfg.sft.deepspeed
-    assert (palm.palm.mode, uniform.palm.mode) == ("palm", "all")
-    # The two arms differ only in the loss mask (and which files they read and write).
-    assert palm.selection == uniform.selection
+    assert (palm.palm.mode, uniform.palm.mode, arex.palm.mode) == ("palm", "all", "arex")
+    # The arms differ only in the loss mask (and which files they read and write).
     own = {"output_dir", "train_files"}
-    assert {k: v for k, v in vars(palm.sft).items() if k not in own} == \
-           {k: v for k, v in vars(uniform.sft).items() if k not in own}
+    same = lambda cfg: {k: v for k, v in vars(cfg.sft).items() if k not in own}
+    for other in (uniform, arex):
+        assert palm.selection == other.selection
+        assert same(palm) == same(other)
+        assert {k: v for k, v in vars(palm.palm).items() if k != "mode"} == \
+               {k: v for k, v in vars(other.palm).items() if k != "mode"}
+    assert len({tuple(c.sft.train_files) for c in (palm, uniform, arex)}) == 3
+    assert len({c.sft.output_dir for c in (palm, uniform, arex)}) == 3
 
 
 def test_training_and_inference_render_tool_calls_identically():

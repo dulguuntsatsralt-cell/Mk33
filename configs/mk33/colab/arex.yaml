@@ -1,0 +1,10 @@
+inherit: palm.yaml
+name: colab_arex
+description: >
+  AREX-2's masking at Colab scale: zero weight for redundant, empty and polling turns,
+  full weight for every other turn (no progress-aware credit). The fair baseline for PALM:
+  same data, same settings, only the loss mask differs.
+palm: {mode: arex}
+sft:
+  train_files: [data/colab/windows_arex.jsonl]
+  output_dir: checkpoints/colab_arex

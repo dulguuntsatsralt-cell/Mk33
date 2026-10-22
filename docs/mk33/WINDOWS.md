@@ -64,6 +64,14 @@ Full grid (2 tasks, 3 memory modes, 3 repeats; leave it overnight):
 powershell -ExecutionPolicy Bypass -File scripts\mk33\windows\run_local.ps1 -Full
 ```
 
+Long run (the regression task, `truncate` vs `rlc`, up to 40 rounds each; about 8 to 10
+hours). This is the run that shows whether the agent keeps improving after its context
+fills up; it ends by drawing `bench\long\curves.png`, with the first compaction marked:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\mk33\windows\run_local.ps1 -Long
+```
+
 Runs are resumable: stop with Ctrl+C or close the laptop, run the same command again,
 and finished runs are skipped. Results and `report.md` are in `bench\local\`.
 

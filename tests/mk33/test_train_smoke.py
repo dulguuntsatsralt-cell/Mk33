@@ -69,13 +69,15 @@ def test_small_scale_training_end_to_end(tmp_path, monkeypatch):
     counts = collect_trajectories(tmp_path / "teacher", tmp_path / "trajs.jsonl")
     assert counts["written"] == 2
 
-    for arm in ("palm", "uniform"):
+    for arm in ("palm", "uniform", "arex"):
         assert main(["build-sft", "--config", f"configs/mk33/colab/{arm}.yaml", "--trajs", str(tmp_path / "trajs.jsonl"),
                      "--out", str(tmp_path / f"windows_{arm}.jsonl")]) == 0
     win = lambda arm: [json.loads(l) for l in (tmp_path / f"windows_{arm}.jsonl").read_text(encoding="utf-8").splitlines()]
     palm_w = [w for row in win("palm") for w in row["weights"] if w is not None]
     uni_w = [w for row in win("uniform") for w in row["weights"] if w is not None]
-    assert len(palm_w) == len(uni_w) and set(uni_w) == {1.0}  # same turns, different weights
+    arex_w = [w for row in win("arex") for w in row["weights"] if w is not None]
+    assert len(palm_w) == len(uni_w) == len(arex_w) and set(uni_w) == {1.0}  # same turns, different weights
+    assert set(arex_w) <= {0.0, 1.0}  # AREX: zero or full weight, never the PALM lambda
 
     corpus = [json.dumps(row) for row in win("uniform")] * 3
     model_dir = tmp_path / "tiny-model"

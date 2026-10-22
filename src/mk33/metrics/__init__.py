@@ -7,12 +7,18 @@
 | best-so-far AUC     | area under the normalized best-so-far curve over the time budget  |
 | recovery rate       | share of regressions followed by a new best within 3 rounds       |
 | wasted-turn share   | share of turns flagged R, N, or P by the PALM rules               |
+| re-try rate         | share of rounds (after the first) that repeat a known dead end:   |
+|                     | a solution identical to an earlier submission, or an idea that    |
+|                     | closely matches an earlier round that did not improve the score   |
 
 Failed submissions count as non-improving rounds. The best starts at 0 (baseline).
+The re-try rate is new in Mk33 (it is not an AREX-2 metric): it measures forgetting
+directly, since an agent that remembers what failed should not try it again.
 """
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import asdict, dataclass
 
 from ..palm.rules import is_null, is_polling, is_redundant
@@ -89,6 +95,57 @@ def wasted_turn_share(traj: Trajectory) -> float:
     return flagged / len(turns)
 
 
+def _solution_hash(files: dict[str, str]) -> str | None:
+    if not files:
+        return None
+    h = hashlib.sha256()
+    for path in sorted(files):
+        # Whitespace-only edits do not make a new solution.
+        h.update(path.encode() + b"\0" + " ".join(files[path].split()).encode() + b"\0")
+    return h.hexdigest()
+
+
+def _idea_words(text: str) -> set[str]:
+    from ..scaffold.memory import tokenize
+
+    return set(tokenize(text))
+
+
+def retry_rate(traj: Trajectory, eps: float = 0.0, idea_jaccard: float = 0.6,
+               min_idea_words: int = 3) -> float | None:
+    """Share of rounds 2..n that repeat a known dead end.
+
+    A round is a re-try if (a) the scored solution is identical to one already submitted
+    in an earlier round (an exact repeat can never be new information), or (b) its
+    ``hypothesis`` shares at least ``idea_jaccard`` of its words with the hypothesis of an
+    earlier round that failed or did not beat the best so far. Hypotheses shorter than
+    ``min_idea_words`` words are too vague to compare and only count through (a).
+    None when the run has fewer than two rounds.
+    """
+    subs = [t.submission for t in traj.turns if t.tool == "submit" and t.submission is not None]
+    if len(subs) < 2:
+        return None
+    seen: set[str] = set()
+    dead_ideas: list[set[str]] = []
+    best, retries = 0.0, 0
+    for k, s in enumerate(subs):
+        h = _solution_hash(s.solution_files)
+        words = _idea_words(s.hypothesis)
+        if k > 0:
+            same_solution = h is not None and h in seen
+            same_idea = len(words) >= min_idea_words and any(
+                len(words & d) / len(words | d) >= idea_jaccard for d in dead_ideas)
+            retries += same_solution or same_idea
+        if h is not None:
+            seen.add(h)
+        improved = s.ok and s.normalized is not None and s.normalized > best + eps
+        if improved:
+            best = s.normalized
+        elif len(words) >= min_idea_words:
+            dead_ideas.append(words)
+    return retries / (len(subs) - 1)
+
+
 @dataclass
 class ProcessMetrics:
     rounds: int
@@ -98,6 +155,7 @@ class ProcessMetrics:
     auc: float | None
     recovery_rate: float | None
     wasted_turn_share: float
+    retry_rate: float | None = None
 
 
 def process_metrics(traj: Trajectory, budget_s: float | None = None, m: int = 5) -> ProcessMetrics:
@@ -112,6 +170,7 @@ def process_metrics(traj: Trajectory, budget_s: float | None = None, m: int = 5)
         auc=best_so_far_auc(pts, budget_s) if budget_s else None,
         recovery_rate=recovery_rate(scores, eps),
         wasted_turn_share=wasted_turn_share(traj),
+        retry_rate=retry_rate(traj, eps),
     )
 
 
