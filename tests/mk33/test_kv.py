@@ -238,3 +238,14 @@ def test_hf_client_returns_agent_format_and_records_stats(model):
     s = summarize_stats(client.stats)
     assert s["kv_policy"] == "keynorm@64" and s["kv_calls"] == 2
     assert s["kv_peak_cache_tokens"] <= 64 + 32 and s["kv_evicted_share"] > 0
+
+
+def test_hf_client_counts_tokens_with_its_tokenizer(model):
+    class WordTokenizer:  # a real HF tokenizer returns a flat list without return_tensors
+        eos_token_id = None
+
+        def __call__(self, text, add_special_tokens=False):
+            return {"input_ids": text.split()}
+
+    client = HFChatClient(model, WordTokenizer())
+    assert client.count_tokens("fit predict on train rows") == 5

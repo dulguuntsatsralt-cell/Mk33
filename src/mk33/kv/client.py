@@ -113,6 +113,10 @@ class HFChatClient:
         ids = self.tokenizer(prompt, add_special_tokens=False, return_tensors="pt")["input_ids"]
         return ids if isinstance(ids, torch.Tensor) else torch.tensor(ids)
 
+    def count_tokens(self, text: str) -> int:
+        """Exact token count with the model's tokenizer (used for the agent's text window)."""
+        return len(self.tokenizer(text, add_special_tokens=False)["input_ids"])
+
     def chat(self, messages, tools=None, **kw):
         ids = self.encode(messages, tools)
         new, stats = self.gen.generate(
