@@ -18,7 +18,6 @@ directly, since an agent that remembers what failed should not try it again.
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import asdict, dataclass
 
 from ..palm.rules import is_null, is_polling, is_redundant
@@ -96,13 +95,9 @@ def wasted_turn_share(traj: Trajectory) -> float:
 
 
 def _solution_hash(files: dict[str, str]) -> str | None:
-    if not files:
-        return None
-    h = hashlib.sha256()
-    for path in sorted(files):
-        # Whitespace-only edits do not make a new solution.
-        h.update(path.encode() + b"\0" + " ".join(files[path].split()).encode() + b"\0")
-    return h.hexdigest()
+    from ..scaffold.tools import solution_fingerprint
+
+    return solution_fingerprint(files)
 
 
 def _idea_words(text: str) -> set[str]:

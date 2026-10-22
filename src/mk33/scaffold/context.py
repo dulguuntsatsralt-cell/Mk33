@@ -19,7 +19,9 @@ Message = dict[str, Any]
 SYSTEM_PROMPT = """You are an agent that improves a solution over many rounds.
 
 Each round: investigate, change the solution, then call `submit` to score it. The score and
-logs come back to you. Use `run_job` and `wait_job` for long commands instead of polling.
+logs come back to you. You start in the task's workspace; use relative paths such as
+`solution.py`. Change files with `edit_file`: `submit` scores the files as they are on disk,
+not what the hypothesis describes. Use `run_job` and `wait_job` for long commands instead of polling.
 Every `submit` needs a `hypothesis` (what you tried and why) and a one-line `lesson`.
 
 A round ledger lists every past round, including failures. Older turns may be compacted
