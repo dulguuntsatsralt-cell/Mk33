@@ -24,6 +24,7 @@ Runs are resumable: a run whose ``result.json`` exists is skipped unless ``force
 from __future__ import annotations
 
 import copy
+from collections import Counter
 import json
 import random
 import shutil
@@ -56,6 +57,9 @@ class BenchConfig:
     max_rounds: int = 15
     max_wall_s: float = 45 * 60
     window: int = 24_000  # tokens; small on purpose so long runs must be compacted
+    # Longest tool output kept in one observation, in tokens; 0 = window // 8. One file read
+    # must not fill the whole window (a CSV read once took a run past 30K tokens).
+    max_output_tokens: int = 0
     theta: float = 0.75
     keep_rounds: int = 2
     ledger_cap: int = 3_000
@@ -214,7 +218,8 @@ def run_one(env: EnvSpec, mode: str, rep: int, cfg: BenchConfig, client: ChatCli
     env_run.workspace_dir = str(ws.resolve())
 
     sandbox = LocalSandbox(ws)
-    tools = ToolConfig(bash_timeout_s=cfg.bash_timeout_s, max_wait_s=cfg.max_wait_s, enabled=list(BENCH_TOOLS))
+    tools = ToolConfig(bash_timeout_s=cfg.bash_timeout_s, max_wait_s=cfg.max_wait_s, enabled=list(BENCH_TOOLS),
+                       max_output_tokens=cfg.max_output_tokens or max(256, cfg.window // 8))
     ex = ToolExecutor(env_run, sandbox, IsolatedScorer(env_run), tools)
     agent_cfg = AgentConfig(
         budget=Budget(max_tool_calls=cfg.max_tool_calls, max_wall_s=cfg.max_wall_s, max_rounds=cfg.max_rounds),
@@ -228,7 +233,9 @@ def run_one(env: EnvSpec, mode: str, rep: int, cfg: BenchConfig, client: ChatCli
     t0 = time.time()
     traj = None
     try:
-        traj = Agent(retrying, ex, env_run, agent_cfg).run()
+        # Count the text window with the model's own tokenizer when there is one (local models),
+        # so text-level and KV-level memory budgets are measured in the same tokens.
+        traj = Agent(retrying, ex, env_run, agent_cfg, count_tokens=getattr(client, "count_tokens", None)).run()
     except Exception as e:  # keep the grid going; record what broke
         row["error"] = f"{type(e).__name__}: {e}"
         row["traceback"] = traceback.format_exc()[-4000:]
@@ -250,7 +257,11 @@ def run_one(env: EnvSpec, mode: str, rep: int, cfg: BenchConfig, client: ChatCli
         curve = best_so_far_curve(traj, cfg.max_rounds)
         subs = [t.submission for t in traj.turns if t.tool == "submit" and t.submission is not None]
         row.update({
-            "best": m.best if m.best is not None else 0.0,
+            # The agent always has the baseline solution, so the best it ends with is never below 0.
+            # best_submitted keeps the raw best over submissions (below 0 if every submit was worse).
+            "best": max(0.0, m.best) if m.best is not None else 0.0,
+            "best_submitted": m.best,
+            "errors": dict(Counter(s.error_signature or "unknown error" for s in subs if not s.ok).most_common(3)),
             "beat_reference": bool(m.best is not None and m.best >= 1.0),
             "rounds": m.rounds,
             "failed_rounds": sum(1 for s in subs if not s.ok),
