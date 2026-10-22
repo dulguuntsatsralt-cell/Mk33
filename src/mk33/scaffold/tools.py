@@ -121,6 +121,16 @@ def snapshot_text_files(root: Path, max_bytes: int) -> dict[str, str]:
     return out
 
 
+def solution_fingerprint(files: dict[str, str]) -> str | None:
+    """Hash of a solution snapshot, ignoring whitespace-only changes (None if empty)."""
+    if not files:
+        return None
+    h = hashlib.sha256()
+    for path in sorted(files):
+        h.update(path.encode() + b"\0" + " ".join(files[path].split()).encode() + b"\0")
+    return h.hexdigest()
+
+
 def diff_stat(diffs: list[str]) -> str:
     per: dict[str, list[int]] = {}
     for d in diffs:
@@ -155,6 +165,7 @@ class ToolExecutor:
         self.fetch = fetch
         self.round = 1
         self._round_diffs: list[str] = []
+        self._submitted: dict[str, int] = {}  # solution fingerprint -> first round it was submitted
 
     def schemas(self) -> list[dict]:
         return [TOOL_SCHEMAS[n] for n in self.cfg.enabled if n in TOOL_SCHEMAS]
@@ -163,7 +174,9 @@ class ToolExecutor:
         return workspace_hash(self.workspace)
 
     def _resolve(self, path: str) -> Path:
-        p = (self.workspace / path).resolve()
+        from ..paths import agent_relative
+
+        p = (self.workspace / agent_relative(path)).resolve()
         p.relative_to(self.workspace)  # raises ValueError if outside
         return p
 
@@ -260,6 +273,16 @@ class ToolExecutor:
             obs = f"[round {sub.round} scored] score {res.score:.6g}{norm}\n{res.logs[-1500:]}"
         else:
             obs = f"[round {sub.round} failed] {res.error_signature}\n{res.logs[-1500:]}"
+        # The round still counts and is scored as usual; the note only tells the agent that
+        # describing a change in the hypothesis does not make it.
+        fp = solution_fingerprint(sub.solution_files)
+        if fp is not None and fp in self._submitted:
+            first = self._submitted[fp]
+            obs += (f"\n[note: this solution is identical to the one submitted in round {first}; no file was "
+                    f"changed since then. Use edit_file to change the solution before the next submit.]")
+            sub_meta["unchanged_since"] = first
+        elif fp is not None:
+            self._submitted[fp] = sub.round
         return ToolResult(obs, submission=sub, meta=sub_meta)
 
     def _t_answer(self, answer: str, confidence: float | None = None,

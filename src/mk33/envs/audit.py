@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from ..paths import agent_relative
 from ..trajectory import Trajectory
 from .decontam import normalize_url
 from .spec import EnvSpec
@@ -71,7 +72,8 @@ def check_paths(traj: Trajectory, env: EnvSpec, cfg: AuditConfig) -> list[AuditF
         paths: list[str] = []
         if t.tool in ("read_file", "edit_file"):
             p = str(t.args.get("path", ""))
-            full = p if p.startswith("/") else str(Path(env.workspace_dir) / p)
+            rel = agent_relative(p)  # "/workspace/x" is the workspace, as in DockerSandbox
+            full = rel if (rel.startswith("/") or Path(rel).is_absolute()) else str(Path(env.workspace_dir) / rel)
             if not _under(full, env.workspace_dir):
                 flags.append(AuditFlag("rules.outside_workspace", t.index, p))
             paths.append(full)
