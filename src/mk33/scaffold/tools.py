@@ -123,6 +123,22 @@ def snapshot_text_files(root: Path, max_bytes: int) -> dict[str, str]:
     return out
 
 
+def bad_arguments_message(name: str, args: dict[str, Any]) -> str:
+    """Plain feedback for a call with missing or unknown arguments (instead of a Python TypeError)."""
+    params = TOOL_SCHEMAS.get(name, {}).get("function", {}).get("parameters", {})
+    required = list(params.get("required", []))
+    allowed = list(params.get("properties", {}))
+    missing = [r for r in required if r not in args]
+    unknown = [a for a in args if a not in allowed]
+    parts = []
+    if missing:
+        parts.append("missing " + ", ".join(missing))
+    if unknown:
+        parts.append("unknown " + ", ".join(unknown))
+    detail = "; ".join(parts) or "wrong argument types"
+    return f"[{name} was not run: {detail}. Required arguments: {', '.join(required) or 'none'}.]"
+
+
 _LINE_NO = re.compile(r"^\s*\d+\t")
 
 
@@ -216,8 +232,8 @@ class ToolExecutor:
             return ToolResult(f"[unknown tool {name}]")
         try:
             return fn(**args)
-        except TypeError as e:
-            return ToolResult(f"[bad arguments for {name}: {e}]")
+        except TypeError:
+            return ToolResult(bad_arguments_message(name, args))
         except ValueError as e:
             return ToolResult(f"[error: {e}]")
 

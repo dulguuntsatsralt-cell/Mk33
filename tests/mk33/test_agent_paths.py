@@ -83,3 +83,12 @@ def test_ambiguous_lenient_match_is_refused(toy_env):
     ex.call("edit_file", {"path": "solution.py", "old_str": "", "new_str": "x = 1  \nx = 1\t\n"})
     r = ex.call("edit_file", {"path": "solution.py", "old_str": "x = 1", "new_str": "y"}).observation
     assert "matches 2 places" in r  # exact count first: two exact substring hits
+
+
+def test_missing_arguments_get_plain_feedback(toy_env):
+    ex = executor(toy_env)
+    r = ex.call("edit_file", {"old_str": "", "new_str": "VALUE = 1"}).observation
+    assert r == "[edit_file was not run: missing path. Required arguments: path, old_str, new_str.]"
+    r = ex.call("read_file", {"file": "solution.py"}).observation
+    assert "missing path" in r and "unknown file" in r
+    assert "VALUE = 0" in ex.call("read_file", {"path": "solution.py"}).observation  # nothing was changed
