@@ -101,7 +101,7 @@ def materialize(c: RepoCandidate, draft: dict, root: str | Path, env_id: str) ->
     workspace.mkdir(parents=True, exist_ok=True)
     scorer_dir.mkdir(parents=True, exist_ok=True)
     script = scorer_dir / "score.py"
-    script.write_text(draft["score_py"])
+    script.write_text(draft["score_py"], encoding="utf-8")
     return EnvSpec(
         env_id=env_id,
         domain="ml",

@@ -117,7 +117,7 @@ def snapshot_text_files(root: Path, max_bytes: int) -> dict[str, str]:
     out = {}
     for p in iter_workspace_files(root):
         if p.suffix in TEXT_SUFFIXES and p.stat().st_size <= max_bytes:
-            out[p.relative_to(root).as_posix()] = p.read_text(errors="replace")
+            out[p.relative_to(root).as_posix()] = p.read_text(encoding="utf-8", errors="replace")
     return out
 
 
@@ -190,7 +190,7 @@ class ToolExecutor:
         p = self._resolve(path)
         if not p.exists():
             return ToolResult(f"[no such file: {path}]")
-        lines = p.read_text(errors="replace").splitlines()
+        lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
         s = max((start or 1) - 1, 0)
         e = end or len(lines)
         body = "\n".join(f"{i + 1}\t{l}" for i, l in enumerate(lines[s:e], start=s))
@@ -205,12 +205,12 @@ class ToolExecutor:
             p.parent.mkdir(parents=True, exist_ok=True)
             after = new_str
         else:
-            before = p.read_text(errors="replace")
+            before = p.read_text(encoding="utf-8", errors="replace")
             n = before.count(old_str) if old_str else 0
             if n != 1:
                 return ToolResult(f"[old_str must match exactly once; matched {n} times]")
             after = before.replace(old_str, new_str, 1)
-        p.write_text(after)
+        p.write_text(after, encoding="utf-8")
         rel = p.relative_to(self.workspace).as_posix()
         diff = "".join(difflib.unified_diff(
             before.splitlines(keepends=True), after.splitlines(keepends=True),

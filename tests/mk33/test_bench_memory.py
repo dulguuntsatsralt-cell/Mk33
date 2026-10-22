@@ -40,7 +40,7 @@ def test_retrieval_modes_run_compact_and_retrieve(knapsack, tmp_path):
     rows = run_grid(knapsack, cfg, lambda: ImprovingClient(pad=150), tmp_path, "scripted", log=lambda s: None)
     for row in rows:
         assert row["error"] is None and row["best"] > 1.0 and row["compactions"] > 0
-        traj = json.loads((tmp_path / f"runs/bench-knapsack/{row['mode']}/rep0/trajectory.json").read_text())
+        traj = json.loads((tmp_path / f"runs/bench-knapsack/{row['mode']}/rep0/trajectory.json").read_text(encoding="utf-8"))
         assert traj["metadata"]["rlc"]["mode"] == row["mode"]
         assert any(e["retrieved"] for e in traj["metadata"]["compactions"])
 
@@ -57,10 +57,10 @@ def test_dry_run_cli_with_retrieval(knapsack, tmp_path):
     from mk33.cli import main
 
     envs = tmp_path / "envs.jsonl"
-    envs.write_text(json.dumps(knapsack[0].to_dict()) + "\n")
+    envs.write_text(json.dumps(knapsack[0].to_dict()) + "\n", encoding="utf-8")
     assert main(["bench-run", "--envs", str(envs), "--dry-run", "--modes", "retrieve,rlc", "--repeats", "1",
                  "--max-rounds", "2", "--out", str(tmp_path / "out")]) == 0
-    assert "retrieve" in (tmp_path / "out/report.md").read_text()
+    assert "retrieve" in (tmp_path / "out/report.md").read_text(encoding="utf-8")
 
 
 class KVScriptFactory:
@@ -97,7 +97,7 @@ def test_kv_modes_record_cache_stats_in_results_and_report(knapsack, tmp_path):
     assert kv["kv_peak_cache_tokens"] <= 64 + 32 < full["kv_peak_cache_tokens"]
     assert kv["kv_evicted_share"] > 0 == full["kv_evicted_share"]
     write_report(tmp_path)
-    md = (tmp_path / "report.md").read_text()
+    md = (tmp_path / "report.md").read_text(encoding="utf-8")
     assert "peak KV cache (tokens)" in md and "kv:streaming" in md
 
 
@@ -105,4 +105,4 @@ def test_report_has_no_kv_rows_for_api_runs(knapsack, tmp_path):
     cfg = BenchConfig(modes=["rlc"], repeats=1, max_rounds=2, workers=1)
     run_grid(knapsack, cfg, SubmitOnlyClient, tmp_path, "dry-run", log=lambda s: None)
     write_report(tmp_path)
-    assert "KV cache" not in (tmp_path / "report.md").read_text()
+    assert "KV cache" not in (tmp_path / "report.md").read_text(encoding="utf-8")

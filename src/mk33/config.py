@@ -35,7 +35,7 @@ def deep_merge(base: dict, over: dict) -> dict:
 
 def load_yaml(path: str | Path) -> dict[str, Any]:
     path = Path(path)
-    data = yaml.safe_load(path.read_text()) or {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     parent = data.pop("inherit", None)
     if parent:
         data = deep_merge(load_yaml((path.parent / parent).resolve()), data)

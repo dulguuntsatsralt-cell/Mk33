@@ -18,7 +18,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -e '.[dev]'
+      - run: pip install -e '.[dev,langgraph]'
+      - run: python -m pytest tests/mk33 -q
+
+  other-os:
+    # The agent sandbox, scorer and benchmark on Windows (Git Bash) and macOS.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev,langgraph]"
       - run: python -m pytest tests/mk33 -q
 
   kv:
@@ -31,8 +46,9 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - run: pip install -e '.[dev]' 'transformers>=4.46' triton
+      - run: pip install -e '.[dev]' 'transformers>=4.46' triton peft accelerate
       - run: python -m pytest tests/mk33/test_kv.py tests/mk33/test_bench_memory.py -q
+      - run: python -m pytest tests/mk33/test_sft.py tests/mk33/test_train_smoke.py -q  # LoRA training end to end
       - run: python -m pytest tests/mk33/test_kv_triton.py -q
         env:
           TRITON_INTERPRET: "1"

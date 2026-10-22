@@ -14,10 +14,11 @@ Training recipe and reference code for agents that improve their own solutions o
 
 **Paper:** [Mk33: A Fully Specified Recipe and Reference Implementation for Training Long-Horizon Self-Improving Agents](paper/main.pdf) · [Dulguun Enkhtsatsral](https://dulguuntsatsralt.github.io), 2026
 
-> **Status.** Research code. The pipeline, scaffold, and loss masking are implemented and tested. No model has been
-> trained with it yet, so this repository reports no training results. The values in
+> **Status.** Research code. The pipeline, scaffold, and loss masking are implemented and tested on Linux, macOS
+> and Windows. The full-scale recipe has not been run, and the small-scale training experiment
+> ([below](#first-trained-model-palm-vs-uniform-masking)) is ready to run but has no results yet. The values in
 > `configs/mk33/default.yaml` are proposed defaults, not tuned ones. The small benchmark below runs today on a
-> laptop with any OpenAI-compatible model.
+> laptop with any OpenAI-compatible model, including a local one.
 
 ---
 
@@ -121,6 +122,58 @@ mk33 bench-run --backend hf --model Qwen/Qwen2.5-7B-Instruct --window 8000 \
   --modes rlc,retrieve,kv:full,kv:keynorm,kv:random --out bench/memory
 ```
 
+## Task success: does memory change what the agent solves?
+
+The memory results above are next-token loss. `notebooks/mk33_task_success.ipynb` runs the agent end to end on a free
+Colab T4 with each memory method (`truncate`, `rlc`, `retrieve`, `kv:full`, `kv:h2o`) at an equal 8K budget and
+compares final scores with paired bootstrap intervals. The grid takes several Colab sessions; results are saved to
+Google Drive and runs resume where they stopped.
+
+## First trained model: PALM vs uniform masking
+
+`notebooks/mk33_train_palm.ipynb` runs ablation A1 at a scale that fits one T4: a teacher solves training versions of
+the bench tasks (data seeds 1 to 3), the selected runs train two LoRA students on Qwen2.5-1.5B-Instruct (one with PALM
+weights, one with uniform weights, nothing else different), and base, uniform and PALM models are compared on held-out
+tasks (seed 0). Configs: `configs/mk33/colab/`. The training path is tested end to end on CPU with a tiny model
+(`tests/mk33/test_train_smoke.py`).
+
+```bash
+mk33 bench-collect --out teacher_runs --to trajs.jsonl            # teacher data from bench runs
+mk33 train --config configs/mk33/colab/palm.yaml                   # LoRA, float16, merged model saved
+mk33 bench-compare --runs base=eval/base,palm=eval/palm --mode rlc # paired comparison across models
+```
+
+## Web research agent
+
+`web_search` and `web_fetch` work out of the box: DuckDuckGo needs no key, and Tavily or Brave are used when their
+API key is set. `web_fetch` refuses localhost and private-network addresses, including after redirects, so a page
+cannot steer the agent at services on your machine.
+
+```bash
+mk33 ask "Which river flows through Darkhan, Mongolia?" --model mk33-qwen2.5-3b --base-url http://localhost:11434/v1 --window 8000
+mk33 rollout ... --web auto      # enable web tools on any environment
+```
+
+## Running on a laptop (Windows, macOS, Linux)
+
+No GPU is needed for the agent, the bench, RLC or retrieval memory. On Windows, `scripts/mk33/windows/run_local.ps1`
+installs everything, runs a local Qwen2.5-3B through Ollama, and starts a pilot run. Guide:
+[docs/mk33/WINDOWS.md](docs/mk33/WINDOWS.md).
+
+## LangChain / LangGraph integration
+
+The round ledger is available as middleware for LangChain's `create_agent` (LangGraph). It compacts only what the
+model sees, keeps failed steps on the ledger, needs no extra model calls, and can recall old steps with BM25.
+
+```python
+from langchain.agents import create_agent
+from mk33.integrations.langgraph import LedgerMiddleware, mk33_web_tools
+
+agent = create_agent(model, tools=mk33_web_tools(), middleware=[LedgerMiddleware(window=8000, retrieve_k=2)])
+```
+
+Details and a comparison with `SummarizationMiddleware`: [docs/mk33/LANGGRAPH.md](docs/mk33/LANGGRAPH.md).
+
 ## Key defaults
 
 | Setting | Value | Config key |
@@ -160,10 +213,13 @@ AREX-2. It is maintained by its authors and is not included in this repository.
 src/mk33/          the Mk33 package
 src/mk33/bench/    small CPU-only benchmark (environments, runner, report)
 src/mk33/kv/       KV-cache compression for local models (policies, Triton kernels, chat client)
+src/mk33/web.py    web_search / web_fetch providers (DuckDuckGo, Tavily, Brave)
+src/mk33/research.py  question answering with web tools (mk33 ask)
+src/mk33/integrations/  LangChain / LangGraph middleware
 notebooks/         Colab notebooks that reproduce the GPU results
 assets/            logo, banner and social card (assets/make_assets.py rebuilds them)
-configs/mk33/      default config, DeepSpeed config, ablations
-scripts/mk33/      pipeline and ablation scripts
+configs/mk33/      default config, DeepSpeed config, ablations, Colab training configs
+scripts/mk33/      pipeline and ablation scripts, Windows setup, LangGraph example
 tests/mk33/        unit and end-to-end tests
 docs/mk33/         design notes, paper-to-code map, data formats, benchmark guide
 paper/             paper source (LaTeX) and PDF

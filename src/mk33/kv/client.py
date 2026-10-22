@@ -16,6 +16,7 @@ import json
 import re
 from typing import Any
 
+from ..chat import template_messages  # noqa: F401  (re-exported; shared with training)
 from .generate import CompressedGenerator, KVStats
 from .policies import KVPolicy
 
@@ -71,30 +72,6 @@ def parse_tool_calls(text: str) -> tuple[str, list[dict[str, Any]]]:
             except (json.JSONDecodeError, ValueError):
                 pass
     return content.strip(), calls
-
-
-def template_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """OpenAI-format messages -> what HF chat templates expect (arguments as dicts)."""
-    out = []
-    for m in messages:
-        m = dict(m)
-        if m.get("tool_calls"):
-            calls = []
-            for tc in m["tool_calls"]:
-                fn = dict(tc.get("function", {}))
-                args = fn.get("arguments", {})
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except json.JSONDecodeError:
-                        args = {"_raw": args}
-                fn["arguments"] = args
-                calls.append({**tc, "function": fn})
-            m["tool_calls"] = calls
-        if m.get("content") is None:
-            m["content"] = ""
-        out.append(m)
-    return out
 
 
 class HFChatClient:

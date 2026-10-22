@@ -40,7 +40,7 @@ def _write(root: Path, files: dict[str, str]) -> None:
     for rel, text in files.items():
         p = root / rel
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(text)
+        p.write_text(text, encoding="utf-8")
 
 
 def _raw_score(env: EnvSpec, solution_dir: Path) -> float:
@@ -63,7 +63,9 @@ def prepare_task(task: BenchTask, out: Path, seed: int = 0) -> PreparedEnv:
     _write(sc, {"score.py": task.score_py.lstrip(), **heldout})
 
     env = EnvSpec(
-        env_id=f"bench-{task.task_id}",
+        # Seed 0 keeps the original id (existing results stay valid); other seeds get their
+        # own id so runs, selection caps and reports never mix two different datasets.
+        env_id=f"bench-{task.task_id}" if seed == 0 else f"bench-{task.task_id}-s{seed}",
         domain="ml",
         source=f"mk33-bench/{task.task_id}@seed{seed}",
         task_statement=task.statement,
