@@ -81,6 +81,7 @@ class HFChatClient:
         import torch
 
         self.policy = policy or KVPolicy("full")
+        self.text_tool_calls = 0
         if isinstance(model, str):
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -127,6 +128,11 @@ class HFChatClient:
         self.stats.append(stats)
         text = self.tokenizer.decode(new, skip_special_tokens=True)
         content, calls = parse_tool_calls(text)
+        if not calls and tools:  # e.g. a call inside a ```json block
+            from ..toolcalls import calls_from_text, tool_names
+
+            calls = calls_from_text(text, tool_names(tools))
+            self.text_tool_calls += len(calls)
         return {"content": content, "tool_calls": calls}
 
 

@@ -23,6 +23,7 @@ class OpenAIChatClient:
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.text_tool_calls = 0  # calls recovered from the reply text (see mk33.toolcalls)
 
     def chat(self, messages, tools=None, **kw):
         import json
@@ -40,4 +41,9 @@ class OpenAIChatClient:
             except json.JSONDecodeError:
                 args = {"_raw": tc.function.arguments}
             calls.append({"id": tc.id, "name": tc.function.name, "arguments": args})
+        if not calls and tools:
+            from .toolcalls import calls_from_text, tool_names
+
+            calls = calls_from_text(msg.content or "", tool_names(tools))
+            self.text_tool_calls += len(calls)
         return {"content": msg.content or "", "tool_calls": calls}

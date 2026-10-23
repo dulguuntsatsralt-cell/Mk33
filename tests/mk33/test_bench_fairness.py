@@ -84,3 +84,24 @@ def test_best_never_below_baseline_and_errors_are_summarized(regression, tmp_pat
     assert list(row["errors"]) == ["ModuleNotFoundError: No module named 'not_a_real_module'"]
     saved = json.loads((tmp_path / "runs/bench-regression/rlc/rep0/result.json").read_text(encoding="utf-8"))
     assert saved["errors"] == row["errors"]
+
+
+class TextCallClient:
+    """Writes every call as JSON text, like the model after its first compaction."""
+
+    def __init__(self):
+        self.text_tool_calls = 0
+
+    def chat(self, messages, tools=None, **kw):
+        from mk33.toolcalls import calls_from_text, tool_names
+
+        text = '```json\n{"name": "submit", "arguments": {"hypothesis": "baseline", "lesson": "text call"}}\n```'
+        calls = calls_from_text(text, tool_names(tools))
+        self.text_tool_calls += len(calls)
+        return {"content": text, "tool_calls": calls}
+
+
+def test_recovered_text_calls_are_run_and_reported(regression, tmp_path):
+    cfg = BenchConfig(modes=["rlc"], repeats=1, max_rounds=2, max_tool_calls=4, window=8000)
+    row = run_one(regression, "rlc", 0, cfg, TextCallClient(), tmp_path, "scripted")
+    assert row["rounds"] == 2 and row["text_tool_calls"] == 2

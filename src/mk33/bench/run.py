@@ -243,6 +243,8 @@ def run_one(env: EnvSpec, mode: str, rep: int, cfg: BenchConfig, client: ChatCli
         sandbox.kill_all()
     row["wall_s"] = round(time.time() - t0, 1)
     row["llm_calls"], row["llm_retries"] = retrying.calls, retrying.retries
+    # Calls the model wrote as text that were recovered and run (mk33.toolcalls).
+    row["text_tool_calls"] = getattr(client, "text_tool_calls", 0)
     if getattr(client, "stats", None):  # local model: KV-cache memory and speed
         from ..kv.client import summarize_stats
 

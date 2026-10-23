@@ -249,3 +249,11 @@ def test_hf_client_counts_tokens_with_its_tokenizer(model):
 
     client = HFChatClient(model, WordTokenizer())
     assert client.count_tokens("fit predict on train rows") == 5
+
+
+def test_hf_client_recovers_calls_written_in_a_json_block(model):
+    reply = 'Submitting now.\n```json\n{"name": "submit", "arguments": {"hypothesis": "h", "lesson": "l"}}\n```'
+    client = HFChatClient(model, ScriptTokenizer([reply]), KVPolicy("full"), max_tokens=5, chunk=32)
+    tools = [{"type": "function", "function": {"name": "submit", "parameters": {}}}]
+    r = client.chat([{"role": "user", "content": "x" * 50}], tools=tools)
+    assert r["tool_calls"][0]["name"] == "submit" and client.text_tool_calls == 1
