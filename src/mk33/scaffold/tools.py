@@ -74,6 +74,22 @@ class ToolConfig:
     solution_subdir: str = ""  # scored directory, relative to the workspace
     snapshot_max_bytes: int = 200_000  # per file, for provenance snapshots
     enabled: list[str] = field(default_factory=lambda: list(TOOL_SCHEMAS))
+    # Refuse package-manager installs in bash/run_job. With a local sandbox the agent and the
+    # scorer share one Python environment, so an install changes the scoring setup for this run
+    # and every later one (a 40-round run once installed xgboost mid-run).
+    block_package_installs: bool = False
+
+
+# pip / python -m pip / uv pip / conda / mamba / poetry / pipx / apt / npm followed by install or add.
+_PACKAGE_INSTALL = re.compile(
+    r"(?i)\b(?:pip3?|uv|conda|mamba|micromamba|poetry|pipx|apt-get|apt|npm)\b[^;&|\n]*?\b(?:install|add)\b"
+    r"|(?i:\bnpm\s+i\b)")
+INSTALL_BLOCKED = ("[not run: installing packages is not allowed in this task. Use the libraries that are already "
+                   "installed; the task statement says what is guaranteed.]")
+
+
+def is_package_install(command: str) -> bool:
+    return bool(_PACKAGE_INSTALL.search(command or ""))
 
 
 @dataclass
@@ -210,6 +226,7 @@ class ToolExecutor:
         self.round = 1
         self._round_diffs: list[str] = []
         self._submitted: dict[str, int] = {}  # solution fingerprint -> first round it was submitted
+        self.blocked_installs = 0
 
     def schemas(self) -> list[dict]:
         return [TOOL_SCHEMAS[n] for n in self.cfg.enabled if n in TOOL_SCHEMAS]
@@ -238,7 +255,15 @@ class ToolExecutor:
             return ToolResult(f"[error: {e}]")
 
     # ---------------------------------------------------------------- tools
+    def _blocked(self, command: str) -> bool:
+        if self.cfg.block_package_installs and is_package_install(command):
+            self.blocked_installs += 1
+            return True
+        return False
+
     def _t_bash(self, command: str) -> ToolResult:
+        if self._blocked(command):
+            return ToolResult(INSTALL_BLOCKED)
         r = self.sandbox.exec(command, self.cfg.bash_timeout_s)
         out = truncate_middle(r.output, self.cfg.max_output_tokens)
         return ToolResult(f"[exit {r.returncode}]\n{out}", timed_out=r.timed_out)
@@ -290,6 +315,8 @@ class ToolExecutor:
         return ToolResult((diff or "[no change]") + note, diff=diff or None)
 
     def _t_run_job(self, command: str) -> ToolResult:
+        if self._blocked(command):
+            return ToolResult(INSTALL_BLOCKED)
         jid = self.sandbox.start_job(command)
         return ToolResult(f"started job {jid}")
 
