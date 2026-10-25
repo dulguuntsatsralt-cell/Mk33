@@ -15,7 +15,8 @@ Training recipe and reference code for agents that improve their own solutions o
 **Paper:** [Mk33: A Fully Specified Recipe and Reference Implementation for Training Long-Horizon Self-Improving Agents](paper/main.pdf) · [Dulguun Enkhtsatsral](https://dulguuntsatsralt.github.io), 2026
 
 > **Status.** Research code. The pipeline, scaffold, and loss masking are implemented and tested on Linux, macOS
-> and Windows. The full-scale recipe has not been run, and the small-scale training experiment
+> and Windows. The full-scale recipe has not been run. Small-scale results so far: a memory study, task-success
+> grids, and five 40-round runs on a laptop ([below](#long-runs)). The training experiment
 > ([below](#first-trained-model-palm-vs-uniform-masking)) is ready to run but has no results yet. The values in
 > `configs/mk33/default.yaml` are proposed defaults, not tuned ones. The small benchmark below runs today on a
 > laptop with any OpenAI-compatible model, including a local one.
@@ -129,6 +130,12 @@ Colab T4 with each memory method (`truncate`, `rlc`, `retrieve`, `kv:full`, `kv:
 compares final scores with paired bootstrap intervals. The grid takes several Colab sessions; results are saved to
 Google Drive and runs resume where they stopped.
 
+**Result so far:** at 8 rounds per run the methods were not distinguishable. We ran the grid twice with Qwen2.5-3B
+and once with Qwen2.5-7B (4-bit) on a Kaggle T4. `rlc` and `truncate` gave the same score in 10 of 12 pairs (3B) and
+6 of 6 pairs (7B). Most runs overflow their context late or never, so short runs measure the model, not its memory.
+H2O crashed on the 7B model (float16 overflow in eager attention); that is fixed and the grid will be rerun. Raw
+results: [`docs/mk33/results/task-success/`](docs/mk33/results/task-success/).
+
 Both GPU experiments also run on Kaggle, which gives about 30 free GPU hours per week and background runs of up to
 12 hours: [`notebooks/kaggle/`](notebooks/kaggle/), guide in [docs/mk33/KAGGLE.md](docs/mk33/KAGGLE.md).
 
@@ -157,8 +164,26 @@ supposed to prevent. It appears in `report.md`, in `bench-compare`, and in `mk33
 ## Long runs
 
 `run_local.ps1 -Long` runs the regression task for up to 40 rounds with `truncate` and with `rlc` on a laptop
-(about 8 to 10 hours), then `scripts/mk33/plot_curves.py` draws best-so-far by round with the first compaction marked:
-the figure that shows whether the agent keeps improving after its context fills up.
+(5 hours per mode), then `scripts/mk33/plot_curves.py` draws best-so-far by round with the first compaction marked.
+
+We made five such pairs with Qwen2.5-7B (4-bit, Ollama) on an Intel laptop CPU with 16 GB of RAM:
+
+<p align="center"><img src="docs/mk33/results/long-runs/long_runs.png" alt="Best-so-far score by round in five long runs, truncate vs rlc" width="100%"></p>
+
+- **Speed.** `rlc` needed 2.4 to 9.6 times less time per model call than `truncate` in all five pairs, so it finished
+  all 40 rounds in three pairs while `truncate` never passed round 30. Prompts were about the same length. The
+  difference is consistent with prefix-cache reuse: `rlc` only appends between compactions, so on average 72 to 87%
+  of each prompt repeats the previous one, against 39 to 52% for `truncate`, which shifts the context at nearly every
+  call once it is full.
+- **Quality is not established.** In the three pairs without a confound, each mode scored higher at least once, and
+  most gaps trace to failures unrelated to memory. One run (run 3) fits the RLC hypothesis: a new best in round 27,
+  17 rounds after the first compaction.
+- **How small agents fail.** Tool calls written as text after compaction, escaped newlines in code, the same error
+  repeated 28 times, submitting without editing, and wrong library parameters. Re-try rates were 0.64 to 1.00 in every
+  run. The scaffold now handles several of these (text-call recovery, unchanged-submit notes, blocked installs).
+
+Raw runs with full trajectories: [`docs/mk33/results/long-runs/`](docs/mk33/results/long-runs/).
+`python scripts/mk33/long_run_stats.py` recomputes every number; details in Section 9 of the [paper](paper/main.pdf).
 
 ## Web research agent
 
