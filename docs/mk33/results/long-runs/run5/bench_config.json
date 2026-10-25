@@ -1,0 +1,48 @@
+{
+  "model": "mk33-qwen2.5-7b",
+  "modes": [
+    "truncate",
+    "rlc"
+  ],
+  "repeats": 1,
+  "max_tool_calls": 200,
+  "max_rounds": 40,
+  "max_wall_s": 18000.0,
+  "window": 8000,
+  "max_output_tokens": 0,
+  "theta": 0.75,
+  "keep_rounds": 2,
+  "ledger_cap": 3000,
+  "bash_timeout_s": 120,
+  "max_wait_s": 300,
+  "workers": 1,
+  "force": false,
+  "no_think": false,
+  "rpm": 0.0,
+  "retrieve_k": 4,
+  "retrieve_budget": 2000,
+  "retrieve_item_chars": 1200,
+  "retrieve_refresh": "round",
+  "retriever": "bm25",
+  "embed_model": "",
+  "embed_base_url": "",
+  "kv_budget": 8000,
+  "kv_sinks": 4,
+  "kv_recent": 256,
+  "kv_text_window": 32000,
+  "environment": {
+    "python": "3.15.0",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "libraries": {
+      "numpy": "2.5.4",
+      "scikit-learn": "1.9.1",
+      "scipy": "1.18.1",
+      "pandas": null,
+      "xgboost": null,
+      "lightgbm": null,
+      "catboost": null,
+      "torch": null,
+      "transformers": null
+    }
+  }
+}

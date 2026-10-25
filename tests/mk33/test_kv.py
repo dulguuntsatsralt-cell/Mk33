@@ -316,3 +316,75 @@ def test_hf_client_and_factory_route_through_quantized_loading(monkeypatch, mode
     f = kc.HFClientFactory("Qwen/Qwen2.5-7B-Instruct", budget=64, quantize="4bit", device="cuda")
     f("rlc")
     assert calls[-1][1] == "4bit"
+
+
+# ------------------------------------------- H2O in float16 (eager attention overflow)
+def _overflowing_model(dtype):
+    """Tiny Qwen2 whose query-key products exceed float16's range, like Qwen2.5-7B did on a T4."""
+    m = tiny_model(attn="eager", seed=3).to(dtype)
+    with torch.no_grad():
+        for layer in m.model.layers:
+            layer.self_attn.q_proj.weight.mul_(800)  # query-key products reach about 270,000
+            layer.self_attn.k_proj.weight.mul_(800)
+    return m
+
+
+def test_fp16_eager_attention_overflows_without_the_fix_and_not_with_it(monkeypatch):
+    import sys
+
+    from mk33.kv.client import use_fp32_eager_attention
+
+    ids = torch.randint(0, VOCAB, (1, 48), generator=torch.Generator().manual_seed(0))
+    m16 = _overflowing_model(torch.float16)
+    mod = sys.modules[type(m16).__module__]
+    monkeypatch.setattr(mod, "eager_attention_forward", mod.eager_attention_forward)  # restored after the test
+
+    with torch.no_grad():
+        broken = m16(input_ids=ids, output_attentions=True)
+    assert not torch.isfinite(broken.logits).all()          # the bug: inf/nan logits
+
+    assert use_fp32_eager_attention(m16) and use_fp32_eager_attention(m16)  # idempotent
+    with torch.no_grad():
+        fixed = m16(input_ids=ids, output_attentions=True)
+    assert torch.isfinite(fixed.logits).all()
+    assert fixed.attentions[0].dtype == torch.float16 and torch.isfinite(fixed.attentions[0]).all()
+
+    # Valid probabilities, close to the same model computed fully in float32.
+    rows = fixed.attentions[0].float().sum(-1)
+    assert torch.allclose(rows, torch.ones_like(rows), atol=1e-2)
+    m32 = _overflowing_model(torch.float32)
+    with torch.no_grad():
+        ref = m32(input_ids=ids, output_attentions=True)
+    agree = (fixed.logits.float().argmax(-1) == ref.logits.argmax(-1)).float().mean().item()
+    print("top-token agreement with float32:", agree)
+    assert agree > 0.8
+
+
+def test_fp32_eager_attention_is_a_no_op_for_normal_models(monkeypatch, model):
+    import sys
+
+    from mk33.kv.client import use_fp32_eager_attention
+
+    mod = sys.modules[type(model).__module__]
+    monkeypatch.setattr(mod, "eager_attention_forward", mod.eager_attention_forward)
+    m = tiny_model(attn="eager")
+    ids = torch.randint(0, VOCAB, (1, 20), generator=torch.Generator().manual_seed(1))
+    with torch.no_grad():
+        before = m(input_ids=ids).logits
+        use_fp32_eager_attention(m)
+        after = m(input_ids=ids).logits
+    assert torch.allclose(before, after, atol=1e-5)
+
+
+def test_h2o_generation_runs_on_the_overflowing_fp16_model(monkeypatch):
+    import sys
+
+    m16 = _overflowing_model(torch.float16)
+    mod = sys.modules[type(m16).__module__]
+    monkeypatch.setattr(mod, "eager_attention_forward", mod.eager_attention_forward)
+    gen = CompressedGenerator(m16, KVPolicy("h2o", budget=32, sinks=4, recent=8), chunk=16)
+    from mk33.kv.client import use_fp32_eager_attention
+    use_fp32_eager_attention(m16)
+    ids = torch.randint(0, VOCAB, (1, 80), generator=torch.Generator().manual_seed(2))
+    new, stats = gen.generate(ids, max_new_tokens=6, eos_ids=set(), temperature=0.7, top_p=0.95, seed=0)
+    assert len(new) == 6 and stats.compressions > 0

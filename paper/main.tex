@@ -39,7 +39,7 @@
 \maketitle
 
 \begin{abstract}
-AREX-2 shows that a 27B-parameter agent trained by imitation on long-horizon improvement trajectories can keep refining a solution for hours. The paper describes its training recipe in prose and releases only evaluation code, leaving open the thresholds for filtering environments and accepting trajectories, the definition of the ``no-progress'' turns excluded from the loss, the agent's tool set, and what happens when a multi-hour run exceeds the context window. We present Mk33, a complete specification of this recipe with an open, tested reference implementation. It contributes a noise-aware environment filter with decontamination and an isolated, audited scorer; Round Ledger Compaction (RLC), a context manager that keeps every round, including failures, in a structured ledger and yields training windows identical to the contexts seen at test time; and Progress-Aware Loss Masking (PALM), deterministic rules that zero out redundant, null, and polling turns and give full credit to turns that lead to score improvements. Because the full recipe needs a GPU cluster, we design every experiment so that it also runs at small scale on one free GPU or a laptop: the same scaffold, metrics, and statistics, with a context window shrunk so that runs still outgrow it. In a memory study at equal cache size on two 3B models, attention-based KV-cache eviction (H2O) had the lowest loss in every setting and stayed within 0.05 to 0.07 nats of the full cache while keeping half the context, while BM25 retrieval was never distinguishable from plain truncation. We release, with ready-to-run notebooks, three further experiments: task success under each memory method, a direct comparison of PALM against AREX-2's own loss masking and uniform weighting on a LoRA-trained 1.5B model, and 40-round runs that test whether the agent keeps improving after its context fills up. We also introduce a re-try rate that measures forgetting directly, as the share of rounds that repeat a known dead end. \pending{headline task-success and PALM vs.\ AREX-2 results}
+AREX-2 shows that a 27B-parameter agent trained by imitation on long-horizon improvement trajectories can keep refining a solution for hours. The paper describes its training recipe in prose and releases only evaluation code, leaving open the thresholds for filtering environments and accepting trajectories, the definition of the ``no-progress'' turns excluded from the loss, the agent's tool set, and what happens when a multi-hour run exceeds the context window. We present Mk33, a complete specification of this recipe with an open, tested reference implementation. It contributes a noise-aware environment filter with decontamination and an isolated, audited scorer; Round Ledger Compaction (RLC), a context manager that keeps every round, including failures, in a structured ledger and yields training windows identical to the contexts seen at test time; and Progress-Aware Loss Masking (PALM), deterministic rules that zero out redundant, null, and polling turns and give full credit to turns that lead to score improvements. Because the full recipe needs a GPU cluster, we design every experiment so that it also runs at small scale on one free GPU or a laptop: the same scaffold, metrics, and statistics, with a context window shrunk so that runs still outgrow it. In a memory study at equal cache size on two 3B models, attention-based KV-cache eviction (H2O) had the lowest loss in every setting and stayed within 0.05 to 0.07 nats of the full cache while keeping half the context, while BM25 retrieval was never distinguishable from plain truncation. We also introduce a re-try rate that measures forgetting directly, as the share of rounds that repeat a known dead end. In five paired runs of up to 40 rounds with a 7B model on a laptop CPU, RLC needed 2.4 to 9.6 times less time per model call than truncation at a similar prompt length, which we trace to its frozen prefix: on average 72 to 87\% of each RLC prompt repeats the start of the previous one, against 39 to 52\% under truncation, so the inference server can reuse its cache. RLC finished all 40 rounds in three runs and truncation in none. Whether RLC also leads to better solutions is not established: across the three runs without a confound, each mode scored higher at least once, and the gaps trace to failures unrelated to memory. In 8-round grids with 3B and 7B models on one GPU, the memory methods were not distinguishable, because in most runs the context overflows late or never. The comparison of PALM with AREX-2's masking is specified and implemented but not yet run.
 \end{abstract}
 
 % ===================================================================
@@ -61,7 +61,7 @@ Testing the recipe at its intended scale requires thousands of multi-hour rollou
   \item \textbf{Progress-Aware Loss Masking} (\cref{sec:palm}): formal rules for zero-weight turns and a provenance set of full-credit turns, computed deterministically from trajectory logs.
   \item \textbf{A complete recipe and tested implementation} (\cref{sec:recipe,sec:impl}): acceptance rules, every training hyperparameter, a configuration file per ablation, and a test suite that checks the properties the method depends on, including that training contexts reproduce test-time contexts exactly.
   \item \textbf{A memory study at equal cache size} (\cref{sec:memory}): text-level forgetting (truncation, BM25 retrieval) against KV-cache eviction (random, streaming, key-norm, H2O) on two 3B models, with paired bootstrap intervals and fused Triton kernels for the eviction step.
-  \item \textbf{Small-scale experiments with released notebooks} (\cref{sec:small}): task success under each memory method, PALM against AREX-2's masking and uniform weighting, and 40-round long runs, all on free hardware, with a new \emph{re-try rate} metric for forgetting.
+  \item \textbf{Small-scale experiments on free hardware} (\cref{sec:small}): task success under each memory method, 40-round runs on a laptop that show a large speed advantage for RLC from prefix-cache reuse, a catalogue of how small agents fail in long runs, and a new \emph{re-try rate} metric for forgetting. All raw runs and the scripts that compute every number are released.
 \end{enumerate}
 
 
@@ -493,33 +493,39 @@ The eviction step reads and gathers every layer's cache once per compression, so
 
 \subsection{Task success under each memory method}
 \label{sec:tasksuccess}
-This experiment asks whether the differences of \cref{sec:memory} change what an agent solves. The agent (Qwen2.5-3B-Instruct, float16, one T4) runs the regression and knapsack tasks with five memory methods at an equal budget of 8,000 tokens: \code{truncate}, \code{rlc}, and \code{retrieve} (BM25 over dropped turns) at the text level; \code{kv:h2o}, which keeps the full text history and evicts the KV cache to 8,000 tokens; and \code{kv:full}, which forgets nothing up to the model's 32K limit and serves as an upper bound with four times the memory. Each run has up to 8 rounds, 40 tool calls, and 25 minutes; each configuration is repeated three times (30 runs). We report the best normalized score, the share of runs that beat the reference, best-so-far AUC over rounds, the re-try rate, and peak KV-cache memory. The comparisons of interest are \code{rlc} against \code{truncate} (an inference-time version of ablation A2), \code{retrieve} against \code{truncate} (whether retrieval helps on the narrow recall an agent needs), and \code{kv:h2o} against the text-level methods.
+This experiment asks whether the differences of \cref{sec:memory} change what an agent solves. The agent runs the regression and knapsack tasks on one T4 (Kaggle) with five memory methods at an equal budget of 8,000 tokens: \code{truncate}, \code{rlc}, and \code{retrieve} (BM25 over dropped turns) at the text level; \code{kv:h2o}, which keeps the full text history and evicts the KV cache to 8,000 tokens; and \code{kv:full}, which forgets nothing up to the model's 32K limit and serves as an upper bound with four times the memory. Each run has up to 8 rounds, 40 tool calls, and 25 minutes, and each configuration is repeated three times (30 runs per grid). We ran the grid twice with Qwen2.5-3B-Instruct in float16 (the second time after scaffold fixes) and once with Qwen2.5-7B-Instruct quantized to 4-bit NF4. Comparisons are paired by task and repeat.
 
 \begin{table}[t]
 \centering
 \small
-\caption{Task success by memory method (Qwen2.5-3B, regression and knapsack, 3 repeats). Normalized scores: baseline 0, reference 1. \pending{notebooks/mk33\_task\_success.ipynb}}
+\caption{Task success by memory method, 8 rounds per run. Best: mean best normalized score (baseline 0, reference 1; failed runs count as 0). 3B: two grids pooled, 12 runs per method. 7B: one grid, 6 runs per method, shown per task. All H2O runs with the 7B model crashed (see text).}
 \label{tab:tasksuccess}
 \begin{tabular}{@{}l r r r r r@{}}
 \toprule
-Method & Best score & Beat reference & AUC & Re-try rate $\downarrow$ & Peak KV (MB) \\
+& \multicolumn{2}{c}{Qwen2.5-3B (fp16)} & \multicolumn{3}{c}{Qwen2.5-7B (4-bit)} \\
+\cmidrule(lr){2-3}\cmidrule(l){4-6}
+Method & Best & Re-try $\downarrow$ & Regression & Knapsack & Re-try $\downarrow$ \\
 \midrule
-\code{truncate} & \tbd & \tbd & \tbd & \tbd & \tbd \\
-\code{rlc} & \tbd & \tbd & \tbd & \tbd & \tbd \\
-\code{retrieve} & \tbd & \tbd & \tbd & \tbd & \tbd \\
-\code{kv:h2o} & \tbd & \tbd & \tbd & \tbd & \tbd \\
-\code{kv:full} (4$\times$ memory) & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\code{truncate} & 0.168 & 0.79 & 0.336 & 0.995 & 0.72 \\
+\code{rlc} & 0.247 & 0.73 & 0.336 & 0.995 & 0.66 \\
+\code{retrieve} & 0.207 & 0.74 & 0.454 & 0.995 & 0.78 \\
+\code{kv:h2o} & 0.208 & 0.67 & \multicolumn{3}{c}{crashed (fp16 overflow)} \\
+\code{kv:full} (4$\times$ memory) & 0.214 & 0.74 & 0.000 & 0.995 & 0.72 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\pending{discussion of \cref{tab:tasksuccess}: paired differences rlc vs truncate, retrieve vs truncate, kv:h2o vs text methods}
+\paragraph{Findings.} The grids do not separate the memory methods (\cref{tab:tasksuccess}). With the 3B model, \code{rlc} and \code{truncate} gave the same score in 10 of 12 pairs (mean difference $+0.08$, 95\% interval $[0, 0.20]$); the two pairs that differ are the same regression environment and repeat in the two grids, so they are close to a single observation. The 3B model never improved on knapsack. With the 7B model, \code{rlc} and \code{truncate} gave the same score in all 6 pairs; every method reached 0.995 on knapsack, a ceiling, and the regression scores come from one repeat per method. Retrieval against truncation ($+0.06$, $[-0.50, 0.68]$) and the full cache against truncation are also indistinguishable.
+
+The reason is that most runs never reach the regime the methods differ in. All modes send the same context until the first overflow. In 8 rounds the context overflowed late or not at all: with the 7B model, half of the \code{truncate} and \code{rlc} runs never compacted, and in the 3B grids H2O evicted any cache in only 7 of 12 runs. Once a run did overflow, few rounds remained for memory to matter. Task success at this length therefore measures the model, not its memory; the long runs below are the test of memory.
+
+\paragraph{H2O crash.} All six H2O runs with the 7B model failed at the first long prompt with non-finite sampling probabilities. H2O needs the attention weights, so it runs eager attention, which in float16 overflowed: query-key products above 65,504 become infinite and the softmax returns NaN. The 3B model stayed in range. The implementation now computes eager attention in float32 and casts the result back (a test reproduces the overflow by scaling the query and key projections), and the 7B grid will be rerun with the fix.
 
 \subsection{Loss masking: PALM against AREX-2's masking}
 \label{sec:palmexp}
 PALM's central claim is that weighting turns by their contribution to progress trains a better long-horizon agent than masking only redundant, null, and polling turns, as AREX-2 describes. This experiment is ablation A1 at small scale, with AREX-2's rule as the main baseline.
 
-\paragraph{Data.} A teacher runs the regression and knapsack tasks with data seeds 1 to 3 (six training environments), two runs each, with RLC at an 8,000-token window, 8 rounds, and 40 tool calls. The teacher is Qwen2.5-3B-Instruct run locally, or an open-weight model served through an API; closed models are excluded because their terms forbid training on their outputs. \pending{teacher used and number of runs collected}. Runs are accepted by the rule of \cref{sec:accept} with $\tau = 0.5$ instead of 0.9, since a small teacher rarely reaches the reference; at most two runs are kept per environment. The audit is applied unchanged.
+\paragraph{Data.} A teacher runs the regression and knapsack tasks with data seeds 1 to 3 (six training environments), two runs each, with RLC at an 8,000-token window, 8 rounds, and 40 tool calls. The teacher is an open-weight model run locally or served through an API; closed models are excluded because their terms forbid training on their outputs. A 3B teacher is unlikely to be enough: in \cref{sec:tasksuccess} the 3B agent improved on only one of six task-repeats. Runs are accepted by the rule of \cref{sec:accept} with $\tau = 0.5$ instead of 0.9, since a small teacher rarely reaches the reference; at most two runs are kept per environment. The audit is applied unchanged.
 
 \paragraph{Three students.} The accepted runs are turned into training windows three times, differing only in the turn weights: \emph{PALM} (\cref{eq:weights}, $\lambda=0.5$), \emph{AREX-2 masking} (weight 0 for $R$, $N$, $P$ turns and 1 for every other turn, that is, PALM's zero-weight rules without progress-aware credit), and \emph{uniform} (weight 1 on every assistant turn). Each set trains a LoRA adapter on Qwen2.5-1.5B-Instruct with identical settings (\cref{tab:smallhparams}). The windows are built with the same 8,000-token RLC configuration and the same six tool schemas the agent uses at test time, so the training contexts are those the student will see.
 
@@ -545,39 +551,64 @@ Hardware & one NVIDIA T4 (16\,GB) \\
 
 \paragraph{Evaluation.} The base model and the three students run the held-out tasks (seed 0) with RLC at the same budget as the teacher, three repeats each. The comparison that tests PALM against AREX-2 is the paired difference between the PALM and AREX-2 students; uniform against base shows what training on teacher runs does at all.
 
+\paragraph{Status.} The data pipeline, the three weightings, LoRA training, and evaluation are implemented and covered by tests, and the notebook is released. The experiment itself has not been run with a teacher strong enough to produce accepted runs, so no comparison of PALM with AREX-2's masking is reported here.
+
+\subsection{Long runs}
+\label{sec:longrun}
+The claim behind RLC is about late rounds: an agent should keep improving after its early history no longer fits. We ran the regression task, whose score has no ceiling, for up to 40 rounds, 200 tool calls, and 5 hours per run, with \code{truncate} and with \code{rlc}, on a laptop CPU (Intel, 16\,GB, no GPU; Qwen2.5-7B-Instruct, 4-bit, through Ollama with a 10,240-token context and an 8,000-token agent window). We made five such pairs. Between pairs we fixed problems that the runs exposed, so the pairs are not repeats of one configuration; within a pair both modes used the same code. Two pairs have confounds: in run 1 scikit-learn was not installed, so every solution that imported it failed, and in run 4 the \code{rlc} agent installed a gradient-boosting package halfway through, after which package installs were blocked. \Cref{tab:longrun} and \cref{fig:longrun} give the results; \code{scripts/mk33/long\_run\_stats.py} recomputes every number from the saved runs.
+
 \begin{table}[t]
 \centering
 \small
-\caption{Students on held-out tasks (Qwen2.5-1.5B, seed 0, 3 repeats). \pending{notebooks/mk33\_train\_palm.ipynb}}
-\label{tab:palm}
-\begin{tabular}{@{}l r r r r@{}}
+\caption{Long runs: regression, 7B model on a laptop CPU, 5-hour and 40-round budget per run. Last gain: round of the last improvement. Compacted: round of the first compaction. s/call: median seconds per model call. Reused: mean share of each prompt that repeats the start of the previous prompt, from a replay of the contexts. Runs 1 and 4 are confounded (see text).}
+\label{tab:longrun}
+\begin{tabular}{@{}c l r r r r r r r@{}}
 \toprule
-Model & Best score & AUC & Re-try rate $\downarrow$ & Beat reference \\
+Run & Mode & Best & Rounds & Last gain & Compacted & s/call & Reused & Re-try $\downarrow$ \\
 \midrule
-Base (untrained) & \tbd & \tbd & \tbd & \tbd \\
-Uniform weights & \tbd & \tbd & \tbd & \tbd \\
-AREX-2 masking & \tbd & \tbd & \tbd & \tbd \\
-PALM & \tbd & \tbd & \tbd & \tbd \\
+1 & \code{truncate} & 0.000 & 21 & -- & 8 & 585 & 39\% & 0.95 \\
+  & \code{rlc} & 0.000 & 40 & -- & 10 & 61 & 87\% & 0.97 \\
 \midrule
-PALM $-$ AREX-2 (95\% CI) & \tbd & \tbd & \tbd & \\
-Uniform $-$ base (95\% CI) & \tbd & \tbd & \tbd & \\
+2 & \code{truncate} & 1.363 & 23 & 3 & 10 & 266 & 52\% & 0.91 \\
+  & \code{rlc} & 1.287 & 10 & 3 & 10 & 112 & 72\% & 0.78 \\
+\midrule
+3 & \code{truncate} & 0.000 & 24 & -- & 13 & 283 & 51\% & 1.00 \\
+  & \code{rlc} & 1.558 & 40 & 27 & 10 & 93 & 85\% & 0.64 \\
+\midrule
+4 & \code{truncate} & 0.000 & 30 & -- & 11 & 670 & 39\% & 0.97 \\
+  & \code{rlc} & 1.532 & 38 & 17 & 5 & 145 & 82\% & 0.84 \\
+\midrule
+5 & \code{truncate} & 0.000 & 18 & -- & 7 & 599 & 42\% & 0.94 \\
+  & \code{rlc} & 1.558 & 40 & 11 & 12 & 182 & 72\% & 0.90 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\pending{discussion of \cref{tab:palm}, including the PALM weight summary: share of turns with weight 0, $\lambda$, and 1}
-
-\subsection{Long runs}
-\label{sec:longrun}
-The claim behind RLC is about late rounds: an agent should keep improving after its early history no longer fits. We run the regression task, whose score has no ceiling, for up to 40 rounds, 200 tool calls, and 5 hours per run, with \code{truncate} and with \code{rlc}, on a laptop CPU (Qwen2.5-3B-Instruct, 4-bit, through Ollama with a 10,240-token context). The released script plots best-so-far score by round and marks the first compaction of each run; the quantity of interest is the slope after that point.
-
 \begin{figure}[t]
 \centering
-\fbox{\parbox[c][3.2cm][c]{0.9\linewidth}{\centering \pending{figure: best-so-far score by round, truncate vs rlc}\\[4pt]
-{\footnotesize produced by \code{scripts/mk33/windows/run\_local.ps1 -Long} and \code{scripts/mk33/plot\_curves.py}}}}
-\caption{Best-so-far normalized score over 40 rounds on the regression task.}
+\includegraphics[width=\linewidth]{figures/long_runs.pdf}
+\caption{Best-so-far normalized score by round in the five long runs. Dotted lines: first compaction of each mode. A cross marks a run that ran out of time before 40 rounds.}
 \label{fig:longrun}
 \end{figure}
+
+\paragraph{Speed.} \code{rlc} needed less time per model call in all five pairs, by a factor of 2.4 to 9.6 (median 3.3). As a result it finished all 40 rounds in three pairs, while \code{truncate} never got past round 30 in 5 hours. The difference is not prompt length: replaying each run's contexts with the agent's own context builder, the mean prompt was 0.93 to 1.18 times as long under \code{truncate} as under \code{rlc}. It is consistent with prefix reuse. Once the window is full, \code{truncate} drops the oldest turns at nearly every call (17 to 25 times per run, against 9 to 19 compactions for \code{rlc}, which also ran more rounds), and everything after the dropped turns shifts, so a server that caches the previous prompt, as Ollama does, can reuse only the part before the first change. \code{rlc} only appends between compactions, so on average 72 to 87\% of each prompt was identical to the start of the previous one, against 39 to 52\% for \code{truncate}. On a CPU, where reading the prompt dominates the cost of a call, this is the difference between minutes and seconds. Two caveats apply. We did not measure the server's cache hits directly, and output length was not controlled, so part of the gap may come from longer responses under \code{truncate}. The frozen prefix was introduced to keep training windows exact (\cref{sec:windows}); the speed is a side effect, but on local hardware it decides how many rounds a run gets.
+
+\paragraph{Quality.} Whether \code{rlc} leads to better solutions is not established. The three pairs without a confound split: in run 2 both modes made their only gain in round 3 and \code{truncate} ended slightly higher; in runs 3 and 5 \code{rlc} reached 1.558 and \code{truncate} stayed at the baseline. The two \code{rlc} wins have different causes. In run 5 the gain came in round 11, before the first compaction, while \code{truncate} spent 16 rounds on a syntax error (\cref{sec:failures}); that is a difference in the model's luck and speed, not memory. Run 3 is the one pair that matches the RLC hypothesis: \code{rlc} found a further gain in round 27, 17 rounds after its first compaction, with its lowest re-try rate (0.64), while \code{truncate} never edited the solution at all. One pair is not evidence. A test of quality needs repeated pairs on a fixed configuration, ideally with a server-independent budget in rounds rather than hours so that speed does not decide the outcome.
+
+\subsection{How small agents fail in long runs}
+\label{sec:failures}
+The long runs and grids record every failed round with its error. Most failures had nothing to do with memory, and several were fixed in the scaffold between runs. We list them because they decide what a small-scale study can measure, and because each fix is now part of the released code.
+
+\begin{itemize}
+  \item \textbf{Tool calls written as text.} After a compaction, the 7B model sometimes wrote its tool call as a JSON block in the message instead of a structured call. In run 2, 35 of the \code{rlc} agent's turns were lost this way, which is why it played only 10 rounds. The scaffold now recovers such calls from the text (16 recovered in run 3).
+  \item \textbf{Escaped newlines in code.} The model wrote \code{\textbackslash n} inside code it passed to \code{edit\_file}, producing a file that does not parse. In run 5 every one of the \code{truncate} agent's 16 failed rounds had this error.
+  \item \textbf{Repeating the same error.} In run 4 the \code{truncate} agent submitted code with the same undefined name 28 times in a row, although the error was in its context each time. A recent context is not enough when the model does not act on it.
+  \item \textbf{Describing instead of editing.} In run 3 the \code{truncate} agent submitted 24 times without ever changing the solution, each time with a hypothesis describing a change it had not made (re-try rate 1.00). The scaffold now tells the agent when a submission is unchanged.
+  \item \textbf{Wrong library interfaces.} In run 5 the \code{rlc} agent passed a parameter that the installed version of scikit-learn does not accept in 29 rounds.
+  \item \textbf{Environment changes.} Missing packages failed all of run 1; in run 4 the agent installed a package mid-run and then tried others that were not available. Installs are now blocked and the package set is recorded with each run.
+\end{itemize}
+
+Re-try rates were high in every run (0.64 to 1.00): small agents spend most rounds repeating a known failure, whatever the memory method. This is the regime in which a training method such as PALM, which removes repeated and null turns from the loss, should matter most, and it is a reason to expect that better memory alone will not make a small model improve over long runs.
 
 \subsection{Pilot run}
 \label{sec:pilot}
@@ -612,10 +643,11 @@ Optimizing a measurable proxy can diverge from the intended objective~\citep{ska
 % ===================================================================
 
 \begin{itemize}
-  \item \textbf{Small scale.} The experiments use 1.5B to 3B models, two synthetic task types, an 8K window, and runs of tens of rounds. They test whether the mechanisms work when the overflow problem is reproduced at small scale, not whether they reach AREX-2's scores or behave the same at 27B parameters, 128K tokens, and 12-hour runs. The full-scale protocol (\cref{sec:protocol}) has not been run.
-  \item \textbf{Small samples.} Three repeats per configuration and eight windows in the memory study give wide intervals; differences reported as ``unclear'' may be real effects too small to detect.
+  \item \textbf{Small scale.} The experiments use 3B and 7B models, two synthetic task types, an 8K window, and runs of tens of rounds. They test whether the mechanisms work when the overflow problem is reproduced at small scale, not whether they reach AREX-2's scores or behave the same at 27B parameters, 128K tokens, and 12-hour runs. The full-scale protocol (\cref{sec:protocol}) has not been run.
+  \item \textbf{Small samples.} Three repeats per configuration and eight windows in the memory study give wide intervals; differences reported as ``unclear'' may be real effects too small to detect. The long runs are five pairs on one task, with fixes between pairs and two confounded pairs; they support the speed result, which held in every pair, but not a claim about solution quality.
+  \item \textbf{Speed mechanism.} The prefix-reuse explanation of the long-run speedup rests on a replay of the contexts, not on the server's cache statistics, and response length was not controlled. The size of the effect depends on the server and hardware; on a GPU, where prompt processing is cheaper, it should be smaller.
   \item \textbf{Proxy tasks.} The bench tasks are small and synthetic. They have isolated scorers and real headroom, but they are not MLE-bench or Frontier-CS tasks, and results may not transfer.
-  \item \textbf{Small teacher.} A 3B teacher produces weaker trajectories than the teacher AREX-2 used, and the acceptance threshold is lowered accordingly. PALM's advantage, if any, may differ with a stronger teacher.
+  \item \textbf{PALM not yet tested.} The comparison of PALM with AREX-2's masking (\cref{sec:palmexp}) has not been run, so this report makes no claim that PALM trains a better agent. Small teachers produce few acceptable trajectories, and the acceptance threshold must be lowered for them.
   \item \textbf{Heuristic thresholds.} The Jaccard cutoffs, the windows $W_R$ and $M$, and the acceptance thresholds are reasoned defaults rather than tuned values. The re-try rate's idea match misses reworded repeats, so it is a lower bound.
   \item \textbf{Incomplete provenance.} $\splus$ credits surviving edits and evidence one hop away. It misses insights that shape later decisions without shared tokens, such as learning that an approach is a dead end; such turns receive weight $\lambda$.
   \item \textbf{Incomplete implementation.} The free-form summary baseline of A2, the repository crawler, canary-test generation, and the LLM-judge prompt for A1 are not yet implemented, and the human-label check of the PALM rules (\cref{sec:palm}) has not been run.
@@ -625,10 +657,10 @@ Optimizing a measurable proxy can diverge from the intended objective~\citep{ska
 \section{Conclusion}
 % ===================================================================
 
-AREX-2 shows that training on long improvement trajectories is a promising route to agents that improve with more time. Building on that result requires a recipe others can run. Mk33 provides one: explicit environment filters and thresholds, a context manager that keeps failures visible for runs of any length and yields exact training windows, deterministic progress-aware loss masking, and a complete training configuration, each paired with an ablation and implemented in tested, open code. Because the full recipe is expensive, every experiment also runs at a scale that fits one free GPU. At that scale, attention-based KV eviction preserved next-token quality best at equal memory, and keyword retrieval did not beat truncation. \pending{task-success, PALM vs.\ AREX-2, and long-run conclusions}
+AREX-2 shows that training on long improvement trajectories is a promising route to agents that improve with more time. Building on that result requires a recipe others can run. Mk33 provides one: explicit environment filters and thresholds, a context manager that keeps failures visible for runs of any length and yields exact training windows, deterministic progress-aware loss masking, and a complete training configuration, each paired with an ablation and implemented in tested, open code. Because the full recipe is expensive, every experiment also runs at a scale that fits one free GPU. At that scale, attention-based KV eviction preserved next-token quality best at equal memory, and keyword retrieval did not beat truncation. In 40-round runs on a laptop, RLC's frozen prefix made each model call 2.4 to 9.6 times faster than truncation by letting the server reuse its cache, so RLC runs got far more rounds in the same time. Short runs did not separate memory methods, and whether RLC improves solutions, and whether PALM trains better agents than AREX-2's masking, remain open; both need repeated long runs and a stronger teacher than free hardware easily provides. The failures we observed, from tool calls written as text to the same error repeated dozens of times, suggest that for small agents the main obstacle to long runs is acting on the history, not keeping it.
 
 \section*{Code Availability}
-The reference implementation, configuration files, tests, and the notebooks and scripts for every experiment in \cref{sec:small} are available at \url{https://github.com/dulguuntsatsralt-cell/Mk33}. The raw results of the memory study are in \code{docs/mk33/results/}, and \code{scripts/mk33/paper\_figures.py} regenerates its figures.
+The reference implementation, configuration files, tests, and the notebooks and scripts for every experiment in \cref{sec:small} are available at \url{https://github.com/dulguuntsatsralt-cell/Mk33}. The raw results are in \code{docs/mk33/results/}: the memory study, the task-success grids (\code{task-success/}), and the long runs with their full trajectories (\code{long-runs/}). \code{scripts/mk33/long\_run\_stats.py} recomputes the long-run numbers and \code{scripts/mk33/paper\_figures.py} regenerates the figures.
 
 \section*{Acknowledgments}
 Mk33 builds directly on the AREX-2 method of Qian et al.~\citep{qian2026arex2}. We thank the AREX-2 authors for describing their recipe in detail and for releasing their evaluation suite, which made this reference implementation possible. They were not involved in this work, and any errors in interpreting or extending their method are the author's own. The author used an AI assistant to help draft text and code; the author reviewed the content and is responsible for it.
