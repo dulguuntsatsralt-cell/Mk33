@@ -20,7 +20,8 @@ Repository = "https://github.com/dulguuntsatsralt-cell/Mk33"
 mk33 = ["pyyaml", "openai"]
 mk33-train = ["pyyaml", "openai", "torch", "transformers>=4.46", "accelerate", "deepspeed", "peft"]
 mk33-lora = ["pyyaml", "openai", "torch", "transformers>=4.46", "accelerate", "peft"]  # one small GPU (Colab)
-mk33-kv = ["pyyaml", "openai", "torch", "transformers>=4.46", "triton; platform_system == 'Linux'"]
+mk33-kv = ["pyyaml", "openai", "torch", "transformers>=4.46", "triton; platform_system == 'Linux'",
+           "bitsandbytes; platform_system == 'Linux'", "accelerate"]
 langgraph = ["pyyaml", "langchain>=1.0", "langgraph>=1.0", "langchain-core>=1.0"]
 dev = ["pyyaml", "pytest"]
 

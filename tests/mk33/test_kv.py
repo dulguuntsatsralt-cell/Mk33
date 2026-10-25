@@ -257,3 +257,62 @@ def test_hf_client_recovers_calls_written_in_a_json_block(model):
     tools = [{"type": "function", "function": {"name": "submit", "parameters": {}}}]
     r = client.chat([{"role": "user", "content": "x" * 50}], tools=tools)
     assert r["tool_calls"][0]["name"] == "submit" and client.text_tool_calls == 1
+
+
+# ------------------------------------------------------------ 4-bit loading
+def test_load_quantized_requires_cuda(monkeypatch):
+    from mk33.kv import client as kc
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with pytest.raises(RuntimeError, match="need a CUDA GPU"):
+        kc.load_quantized("some/model", "4bit", torch.float16, "cuda", "sdpa")
+    with pytest.raises(ValueError):
+        kc.load_quantized("some/model", "3bit", torch.float16, "cuda", "sdpa")
+
+
+def test_load_quantized_passes_bitsandbytes_settings(monkeypatch):
+    from mk33.kv import client as kc
+
+    seen = {}
+
+    class FakeModel:
+        def eval(self):
+            return self
+
+        def to(self, *a, **k):  # quantized models must not be moved after loading
+            raise AssertionError(".to() called on a quantized model")
+
+    def fake_from_pretrained(name, **kw):
+        seen.update(name=name, **kw)
+        return FakeModel()
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(transformers.AutoModelForCausalLM, "from_pretrained", fake_from_pretrained)
+    kc.load_quantized("Qwen/Qwen2.5-7B-Instruct", "4bit", torch.float16, "cuda", "eager")
+    qc = seen["quantization_config"]  # the real transformers config: checks the API accepts these settings
+    assert isinstance(qc, transformers.BitsAndBytesConfig)
+    assert qc.load_in_4bit and qc.bnb_4bit_quant_type == "nf4" and qc.bnb_4bit_compute_dtype == torch.float16
+    assert seen["device_map"] == {"": 0} and seen["attn_implementation"] == "eager"
+    kc.load_quantized("m", "8bit", torch.float16, "cuda:1", "sdpa")
+    assert seen["quantization_config"].load_in_8bit and seen["device_map"] == {"": 1}
+
+
+def test_hf_client_and_factory_route_through_quantized_loading(monkeypatch, model):
+    from mk33.kv import client as kc
+
+    calls = []
+
+    def fake_load(name, quantize, dtype, device, attn):
+        calls.append((name, quantize, attn))
+        return model
+
+    class Tok:
+        eos_token_id = None
+
+    monkeypatch.setattr(kc, "load_quantized", fake_load)
+    monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", lambda name: Tok())
+    c = kc.HFChatClient("Qwen/Qwen2.5-7B-Instruct", quantize="4bit", device="cuda")
+    assert calls == [("Qwen/Qwen2.5-7B-Instruct", "4bit", "sdpa")] and c.model is model
+    f = kc.HFClientFactory("Qwen/Qwen2.5-7B-Instruct", budget=64, quantize="4bit", device="cuda")
+    f("rlc")
+    assert calls[-1][1] == "4bit"
