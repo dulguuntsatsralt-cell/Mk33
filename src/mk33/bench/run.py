@@ -191,6 +191,28 @@ class RetryingClient:
                 time.sleep(wait * (0.75 + 0.5 * random.random()))
 
 
+LIBRARIES = ("numpy", "scikit-learn", "scipy", "pandas", "xgboost", "lightgbm", "catboost", "torch", "transformers")
+
+
+def environment() -> dict[str, Any]:
+    """Python, platform and versions of the libraries a solution might import (None if missing).
+
+    Package installs are blocked during runs, so this is the library set every run had. It
+    differs between platforms (Kaggle and Colab preinstall many ML libraries), so reports
+    should state it."""
+    import platform
+    import sys
+    from importlib import metadata
+
+    libs = {}
+    for name in LIBRARIES:
+        try:
+            libs[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            libs[name] = None
+    return {"python": sys.version.split()[0], "platform": platform.platform(), "libraries": libs}
+
+
 def best_so_far_curve(traj: Trajectory, rounds: int) -> list[float]:
     """Best normalized score after each round 1..rounds (baseline 0; carried forward)."""
     best, curve = 0.0, []
@@ -219,7 +241,8 @@ def run_one(env: EnvSpec, mode: str, rep: int, cfg: BenchConfig, client: ChatCli
 
     sandbox = LocalSandbox(ws)
     tools = ToolConfig(bash_timeout_s=cfg.bash_timeout_s, max_wait_s=cfg.max_wait_s, enabled=list(BENCH_TOOLS),
-                       max_output_tokens=cfg.max_output_tokens or max(256, cfg.window // 8))
+                       max_output_tokens=cfg.max_output_tokens or max(256, cfg.window // 8),
+                       block_package_installs=True)  # every run uses the same libraries
     ex = ToolExecutor(env_run, sandbox, IsolatedScorer(env_run), tools)
     agent_cfg = AgentConfig(
         budget=Budget(max_tool_calls=cfg.max_tool_calls, max_wall_s=cfg.max_wall_s, max_rounds=cfg.max_rounds),
@@ -245,6 +268,7 @@ def run_one(env: EnvSpec, mode: str, rep: int, cfg: BenchConfig, client: ChatCli
     row["llm_calls"], row["llm_retries"] = retrying.calls, retrying.retries
     # Calls the model wrote as text that were recovered and run (mk33.toolcalls).
     row["text_tool_calls"] = getattr(client, "text_tool_calls", 0)
+    row["blocked_installs"] = ex.blocked_installs
     if getattr(client, "stats", None):  # local model: KV-cache memory and speed
         from ..kv.client import summarize_stats
 
@@ -289,7 +313,8 @@ def run_grid(envs: list[EnvSpec], cfg: BenchConfig, client_factory: Callable[[],
              out: str | Path, model: str, log: Callable[[str], None] = print) -> list[dict[str, Any]]:
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    (out / "bench_config.json").write_text(json.dumps({"model": model, **asdict(cfg)}, indent=2), encoding="utf-8")
+    (out / "bench_config.json").write_text(json.dumps({"model": model, **asdict(cfg), "environment": environment()},
+                                                      indent=2), encoding="utf-8")
     jobs = [(e, m, r) for r in range(cfg.repeats) for e in envs for m in cfg.modes]
     rows: list[dict[str, Any]] = []
     lock = threading.Lock()
