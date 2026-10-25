@@ -135,6 +135,9 @@ def task_success():
         elif code(c) and "--dry-run" in s:
             setsrc(c, s.replace("/content/dry", "/tmp/dry"))
             out.append(c)
+        elif code(c) and "HFChatClient(MODEL" in s:
+            setsrc(c, s.replace('"/tmp/Mk33", "/content/Mk33", ', '"/tmp/Mk33", '))
+            out.append(c)
         elif md(c) and s.startswith("## 5. Run the grid"):
             setsrc(c, s.replace("H2O needs eager attention, so it runs in its own call with a smaller prefill chunk. Both calls write to the same\nfolder and the report combines them.",
                                 "Each mode runs in its own call (H2O with a smaller prefill chunk, since it needs eager attention); all calls\nwrite to the same folder and the report combines them."))
