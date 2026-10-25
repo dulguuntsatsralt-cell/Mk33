@@ -123,11 +123,11 @@ def task_success():
             setsrc(c, TIMER + "\n\n" + s)
             out.append(c)
         elif md(c) and "Save results to Google Drive" in s:
-            setsrc(c, "## 2. Results folder\n\nEverything goes to `/kaggle/working/task_success`, which becomes this "
+            setsrc(c, "## 2. Results folder\n\nEverything goes to `/kaggle/working/task_success_7b`, which becomes this "
                       "version's output.")
             out.append(c)
         elif code(c) and "drive.mount" in s:
-            setsrc(c, resume("task_success") + "\nOUT = OUT_DIR")
+            setsrc(c, resume("task_success_7b") + "\nOUT = OUT_DIR")
             out.append(c)
         elif code(c) and "git clone" in s:
             setsrc(c, install("mk33-kv,dev"))
@@ -140,7 +140,7 @@ def task_success():
                                 "Each mode runs in its own call (H2O with a smaller prefill chunk, since it needs eager attention); all calls\nwrite to the same folder and the report combines them."))
             out.append(c)
         elif code(c) and "for rep in (1, 2, 3)" in s:
-            setsrc(c, '''COMMON = (f"--backend hf --model {MODEL} --dtype {DTYPE} --envs bench/envs/envs.jsonl --out {OUT} "
+            setsrc(c, '''COMMON = (f"--backend hf --model {MODEL} --dtype {DTYPE} --quantize {QUANT} --envs bench/envs/envs.jsonl --out {OUT} "
           "--tasks knapsack,regression --max-rounds 8 --max-tool-calls 40 --max-minutes 25 "
           "--window 8000 --kv-budget 8000 --kv-text-window 32000 --temperature 0.7")
 
@@ -167,7 +167,7 @@ for rep in (1, 2, 3):
                       "report, figure and run summaries (without the large trajectories) to download from the Output tab.")
             out.append(c)
         elif code(c) and "files.download" in s:
-            setsrc(c, "!cd {OUT} && zip -qr /kaggle/working/mk33_task_success_summary.zip report.md summary.json curves.csv "
+            setsrc(c, "!cd {OUT} && zip -qr /kaggle/working/mk33_task_success_7b_summary.zip report.md summary.json curves.csv "
                       "figures runs -x '*/workspace/*' '*/trajectory.json'\n!ls -la /kaggle/working")
             out.append(c)
         else:

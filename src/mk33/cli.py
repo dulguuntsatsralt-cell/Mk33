@@ -265,10 +265,10 @@ def cmd_bench_run(a) -> int:
             raise SystemExit("--model <hugging face id or path> is required with --backend hf")
         from .kv.client import HFClientFactory
 
-        model = a.model
+        model = a.model + (f" ({a.quantize})" if a.quantize else "")  # reports state the quantization
         factory = HFClientFactory(a.model, budget=a.kv_budget or a.window, sinks=a.kv_sinks, recent=a.kv_recent,
                                   chunk=a.kv_chunk, temperature=a.temperature, max_tokens=a.max_tokens,
-                                  device=a.device, dtype=a.dtype)
+                                  device=a.device, dtype=a.dtype, quantize=a.quantize)
     else:
         if not a.model:
             raise SystemExit("--model is required unless --dry-run")
@@ -397,6 +397,8 @@ def main(argv: list[str] | None = None) -> int:
                  "help": "openai: any OpenAI-compatible endpoint; hf: a local Hugging Face model (needed for kv: modes)"},
         device={"help": "hf backend: cuda or cpu (default: cuda if available)"},
         dtype={"default": "auto", "help": "hf backend: auto, bfloat16, float16 or float32"},
+        quantize={"default": "", "choices": ["", "4bit", "8bit"],
+                  "help": "hf backend: load the weights in 4 or 8 bits (bitsandbytes, CUDA only)"},
         retrieve_k={"type": int, "default": 4, "help": "retrieve modes: items placed back per refresh"},
         retrieve_budget={"type": int, "default": 2000, "help": "retrieve modes: tokens for the retrieved block"},
         retrieve_refresh={"default": "round", "choices": ["round", "compaction"]},

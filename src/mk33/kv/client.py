@@ -74,10 +74,37 @@ def parse_tool_calls(text: str) -> tuple[str, list[dict[str, Any]]]:
     return content.strip(), calls
 
 
+QUANTIZE_CHOICES = ("", "4bit", "8bit")
+
+
+def load_quantized(name: str, quantize: str, torch_dtype, device: str, attn: str):
+    """Load a causal LM with bitsandbytes weight quantization on one GPU."""
+    import torch
+    from transformers import AutoModelForCausalLM, BitsAndBytesConfig
+
+    if quantize not in QUANTIZE_CHOICES[1:]:
+        raise ValueError(f"quantize must be one of 4bit, 8bit; got {quantize!r}")
+    if not str(device).startswith("cuda") or not torch.cuda.is_available():
+        raise RuntimeError("4-bit and 8-bit loading need a CUDA GPU (bitsandbytes); "
+                           "on a CPU use Ollama, which ships its own quantized models")
+    if quantize == "4bit":
+        qc = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True,
+                                bnb_4bit_compute_dtype=torch_dtype)
+    else:
+        qc = BitsAndBytesConfig(load_in_8bit=True)
+    gpu = int(str(device).split(":")[1]) if ":" in str(device) else 0
+    # Quantized models are placed at load time and cannot be moved with .to().
+    return AutoModelForCausalLM.from_pretrained(
+        name, dtype=torch_dtype, quantization_config=qc, device_map={"": gpu}, attn_implementation=attn).eval()
+
+
 class HFChatClient:
     def __init__(self, model: str | Any, tokenizer: Any = None, policy: KVPolicy | None = None,
                  temperature: float = 0.7, top_p: float = 0.95, max_tokens: int = 2048, chunk: int = 512,
-                 device: str | None = None, dtype: str = "auto", seed: int = 0):
+                 device: str | None = None, dtype: str = "auto", seed: int = 0, quantize: str = ""):
+        """``quantize``: "" (full precision), "4bit" or "8bit" (bitsandbytes, CUDA only). A 4-bit
+        7B model takes about 5 GB, so it fits one 16 GB T4 with room for the KV cache. Only the
+        weights are quantized; the KV cache and the eviction policies are unchanged."""
         import torch
 
         self.policy = policy or KVPolicy("full")
@@ -90,10 +117,12 @@ class HFChatClient:
                 else getattr(torch, dtype)
             self.model_name = model
             tokenizer = tokenizer or AutoTokenizer.from_pretrained(model)
-            model = AutoModelForCausalLM.from_pretrained(
-                model, dtype=torch_dtype,
-                attn_implementation="eager" if self.policy.needs_attention else "sdpa",
-            ).to(device).eval()
+            attn = "eager" if self.policy.needs_attention else "sdpa"
+            if quantize:
+                model = load_quantized(model, quantize, torch_dtype, device, attn)
+            else:
+                model = AutoModelForCausalLM.from_pretrained(
+                    model, dtype=torch_dtype, attn_implementation=attn).to(device).eval()
         else:
             self.model_name = getattr(getattr(model, "config", None), "_name_or_path", "local")
         self.model, self.tokenizer = model, tokenizer
@@ -169,15 +198,16 @@ class HFClientFactory:
 
     def __init__(self, model: str, budget: int, sinks: int = 4, recent: int = 256, chunk: int = 512,
                  temperature: float = 0.7, max_tokens: int = 2048, device: str | None = None,
-                 dtype: str = "auto", seed: int = 0):
+                 dtype: str = "auto", seed: int = 0, quantize: str = ""):
         self.model_name, self.budget, self.sinks, self.recent = model, budget, sinks, recent
+        self.quantize = quantize
         self.chunk, self.temperature, self.max_tokens = chunk, temperature, max_tokens
         self.device, self.dtype, self.seed = device, dtype, seed
         self._model = self._tok = None
 
     def _load(self):
         if self._model is None:
-            client = HFChatClient(self.model_name, device=self.device, dtype=self.dtype)
+            client = HFChatClient(self.model_name, device=self.device, dtype=self.dtype, quantize=self.quantize)
             self._model, self._tok = client.model, client.tokenizer
         return self._model, self._tok
 

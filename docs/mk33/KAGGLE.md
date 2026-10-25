@@ -6,8 +6,15 @@ a week of quota, against several weeks of daily Colab sessions.
 
 | Notebook | What it runs | GPU time |
 | --- | --- | --- |
-| `notebooks/kaggle/mk33_task_success_kaggle.ipynb` | task success under each memory method (paper Section 9.4) | about 8 to 12 h |
+| `notebooks/kaggle/mk33_task_success_kaggle.ipynb` | task success under each memory method (paper Section 9.4), Qwen2.5-7B with 4-bit weights | about 10 to 15 h |
 | `notebooks/kaggle/mk33_train_palm_kaggle.ipynb` | teacher runs, three students (PALM, AREX-2, uniform), held-out test (Section 9.5) | about 15 to 20 h |
+
+## Model
+
+The task-success notebook uses Qwen2.5-7B-Instruct with 4-bit weights (bitsandbytes), about 5 GB, so it fits one T4.
+A grid with Qwen2.5-3B failed in 5 of 6 task-repeats for reasons unrelated to memory. Before the grid, a check cell
+loads the model and makes one real agent call; if the model does not return a usable tool call, the notebook stops
+there. Results go to `task_success_7b`, so they never mix with the 3B runs.
 
 ## First run
 
