@@ -126,6 +126,8 @@ class HFChatClient:
         else:
             self.model_name = getattr(getattr(model, "config", None), "_name_or_path", "local")
         self.model, self.tokenizer = model, tokenizer
+        if self.policy.needs_attention:
+            use_fp32_eager_attention(model)
         self.gen = CompressedGenerator(model, self.policy, chunk=chunk)
         self.temperature, self.top_p, self.max_tokens = temperature, top_p, max_tokens
         self.seed = seed
@@ -223,7 +225,43 @@ class HFClientFactory:
                             chunk=self.chunk, seed=self.seed * 100_000)
 
 
+def use_fp32_eager_attention(model) -> bool:
+    """Run the model's eager attention in float32 and return its outputs in the model's dtype.
+
+    H2O needs attention probabilities, which only the eager path returns. In float16, eager
+    attention computes query-key products in float16, and on Qwen2.5-7B they exceed float16's
+    range (about 65,000), so a 4-bit 7B grid on a T4 crashed with inf/nan in every H2O run.
+    The fused SDPA path used by the other modes accumulates in float32 and is not affected.
+    This wraps the model family's own ``eager_attention_forward`` (so model-specific details
+    are kept), upcasting only inside attention, one layer at a time. Returns False if the
+    model's code has no such function (older transformers), in which case nothing changes.
+    """
+    import sys
+
+    import torch
+
+    mod = sys.modules.get(type(model).__module__)
+    orig = getattr(mod, "eager_attention_forward", None)
+    if orig is None:
+        return False
+    if getattr(orig, "_mk33_fp32", False):
+        return True
+
+    def eager_fp32(module, query, key, value, attention_mask, *args, **kwargs):
+        mask = attention_mask.float() if attention_mask is not None and attention_mask.is_floating_point() \
+            else attention_mask
+        out, weights = orig(module, query.float(), key.float(), value.float(), mask, *args, **kwargs)
+        return out.to(query.dtype), (weights.to(query.dtype) if weights is not None else None)
+
+    eager_fp32._mk33_fp32 = True
+    eager_fp32._mk33_orig = orig
+    mod.eager_attention_forward = eager_fp32
+    return True
+
+
 def set_attention(model, impl: str) -> None:
+    if impl == "eager":
+        use_fp32_eager_attention(model)
     if getattr(model.config, "_attn_implementation", None) == impl:
         return
     if hasattr(model, "set_attn_implementation"):
