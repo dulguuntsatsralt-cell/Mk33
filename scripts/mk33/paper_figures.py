@@ -3,6 +3,8 @@
     python scripts/mk33/paper_figures.py            # writes paper/figures/*.pdf
 
 Memory study: docs/mk33/results/t4-memq-*/ (summary.json and rows.jsonl).
+Long runs: docs/mk33/results/long-runs/ (result.json per run; summary.json from
+scripts/mk33/long_run_stats.py, which must run first).
 The website and README figures come from scripts/mk33/make_figures.py instead.
 """
 
@@ -95,11 +97,45 @@ def quality_vs_compute(plt, budget=2048):
     plt.close(fig)
 
 
+def long_runs(plt):
+    base = RESULTS / "long-runs"
+    summary = json.loads((base / "summary.json").read_text(encoding="utf-8"))
+    first = {(r["run"], r["mode"]): r["first_compaction_round"] for r in summary["rows"]}
+    runs = sorted({r["run"] for r in summary["rows"]})
+    fig, axes = plt.subplots(1, len(runs), figsize=(6.6, 1.9), sharey=True)
+    styles = {"truncate": ("#CC79A7", "--", "truncate"), "rlc": ("#0072B2", "-", "rlc")}
+    for ax, n in zip(axes, runs):
+        for mode, (color, ls, label) in styles.items():
+            res = json.loads((base / f"run{n}" / mode / "result.json").read_text(encoding="utf-8"))
+            # The saved curve is padded to the round budget; draw only the rounds played.
+            curve = [max(v, 0.0) for v in (res.get("curve") or [])[: res["rounds"]]]
+            ax.step(range(1, len(curve) + 1), curve, where="post", color=color, ls=ls, lw=1.3, label=label)
+            if curve and res["stop"] != "round_budget":  # run ended early (time budget)
+                ax.plot(len(curve), curve[-1], marker="x", color=color, ms=4, mew=1.1)
+            fc = first.get((n, mode))
+            if fc:
+                ax.axvline(fc, color=color, ls=":", lw=0.8)
+        ax.set_title(f"run {n}" + (" (confounded)" if n == 4 else ""), fontsize=8.5)
+        ax.set_xlim(0, 41)
+        ax.set_xticks([1, 20, 40])
+        ax.set_xlabel("round")
+    axes[0].set_ylabel("best normalized score")
+    axes[0].set_ylim(-0.05, 1.7)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=2, frameon=False, bbox_to_anchor=(0.5, -0.03))
+    fig.tight_layout(rect=(0, 0.1, 1, 1))
+    fig.savefig(OUT / "long_runs.pdf")
+    plt.close(fig)
+
+
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     plt = style()
-    loss_vs_budget(plt)
-    quality_vs_compute(plt)
+    if "--long-only" not in sys.argv:
+        loss_vs_budget(plt)
+        quality_vs_compute(plt)
+    if (RESULTS / "long-runs" / "summary.json").exists():
+        long_runs(plt)
     print(f"wrote figures to {OUT}")
     return 0
 

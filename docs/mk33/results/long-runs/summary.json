@@ -1,0 +1,225 @@
+{
+ "rows": [
+  {
+   "run": 1,
+   "mode": "truncate",
+   "best": 0.0,
+   "rounds": 21,
+   "failed_rounds": 19,
+   "retry_rate": 0.95,
+   "last_gain_round": null,
+   "first_compaction_round": 8,
+   "compactions": 24,
+   "llm_calls": 42,
+   "s_per_call": 585,
+   "minutes": 311,
+   "stop": "wall_budget",
+   "text_tool_calls": null,
+   "failures": {
+    "missing library": 19
+   },
+   "mean_prompt_tokens": 4931,
+   "prefix_reused": 0.392
+  },
+  {
+   "run": 1,
+   "mode": "rlc",
+   "best": 0.0,
+   "rounds": 40,
+   "failed_rounds": 38,
+   "retry_rate": 0.97,
+   "last_gain_round": null,
+   "first_compaction_round": 10,
+   "compactions": 9,
+   "llm_calls": 86,
+   "s_per_call": 61,
+   "minutes": 104,
+   "stop": "round_budget",
+   "text_tool_calls": null,
+   "failures": {
+    "missing library": 38
+   },
+   "mean_prompt_tokens": 4439,
+   "prefix_reused": 0.872
+  },
+  {
+   "run": 2,
+   "mode": "truncate",
+   "best": 1.363,
+   "rounds": 23,
+   "failed_rounds": 8,
+   "retry_rate": 0.91,
+   "last_gain_round": 3,
+   "first_compaction_round": 10,
+   "compactions": 18,
+   "llm_calls": 47,
+   "s_per_call": 266,
+   "minutes": 303,
+   "stop": "wall_budget",
+   "text_tool_calls": null,
+   "failures": {
+    "syntax or indentation": 8
+   },
+   "mean_prompt_tokens": 5036,
+   "prefix_reused": 0.521
+  },
+  {
+   "run": 2,
+   "mode": "rlc",
+   "best": 1.287,
+   "rounds": 10,
+   "failed_rounds": 6,
+   "retry_rate": 0.78,
+   "last_gain_round": 3,
+   "first_compaction_round": 10,
+   "compactions": 12,
+   "llm_calls": 61,
+   "s_per_call": 112,
+   "minutes": 307,
+   "stop": "wall_budget",
+   "text_tool_calls": null,
+   "failures": {
+    "undefined name": 6
+   },
+   "mean_prompt_tokens": 5438,
+   "prefix_reused": 0.723
+  },
+  {
+   "run": 3,
+   "mode": "truncate",
+   "best": 0.0,
+   "rounds": 24,
+   "failed_rounds": 0,
+   "retry_rate": 1.0,
+   "last_gain_round": null,
+   "first_compaction_round": 13,
+   "compactions": 17,
+   "llm_calls": 47,
+   "s_per_call": 283,
+   "minutes": 317,
+   "stop": "wall_budget",
+   "text_tool_calls": 0,
+   "failures": {},
+   "mean_prompt_tokens": 5071,
+   "prefix_reused": 0.512
+  },
+  {
+   "run": 3,
+   "mode": "rlc",
+   "best": 1.558,
+   "rounds": 40,
+   "failed_rounds": 14,
+   "retry_rate": 0.64,
+   "last_gain_round": 27,
+   "first_compaction_round": 10,
+   "compactions": 12,
+   "llm_calls": 88,
+   "s_per_call": 93,
+   "minutes": 196,
+   "stop": "round_budget",
+   "text_tool_calls": 16,
+   "failures": {
+    "required function missing": 5,
+    "undefined name": 4,
+    "wrong library API": 4,
+    "escaped newlines in code": 1
+   },
+   "mean_prompt_tokens": 4281,
+   "prefix_reused": 0.85
+  },
+  {
+   "run": 4,
+   "mode": "truncate",
+   "best": 0.0,
+   "rounds": 30,
+   "failed_rounds": 28,
+   "retry_rate": 0.97,
+   "last_gain_round": null,
+   "first_compaction_round": 11,
+   "compactions": 22,
+   "llm_calls": 38,
+   "s_per_call": 670,
+   "minutes": 311,
+   "stop": "wall_budget",
+   "text_tool_calls": 0,
+   "failures": {
+    "undefined name": 28
+   },
+   "mean_prompt_tokens": 5088,
+   "prefix_reused": 0.392
+  },
+  {
+   "run": 4,
+   "mode": "rlc",
+   "best": 1.532,
+   "rounds": 38,
+   "failed_rounds": 25,
+   "retry_rate": 0.84,
+   "last_gain_round": 17,
+   "first_compaction_round": 5,
+   "compactions": 15,
+   "llm_calls": 97,
+   "s_per_call": 145,
+   "minutes": 303,
+   "stop": "wall_budget",
+   "text_tool_calls": 8,
+   "failures": {
+    "missing library": 20,
+    "undefined name": 4,
+    "other": 1
+   },
+   "mean_prompt_tokens": 4762,
+   "prefix_reused": 0.82
+  },
+  {
+   "run": 5,
+   "mode": "truncate",
+   "best": 0.0,
+   "rounds": 18,
+   "failed_rounds": 16,
+   "retry_rate": 0.94,
+   "last_gain_round": null,
+   "first_compaction_round": 7,
+   "compactions": 25,
+   "llm_calls": 45,
+   "s_per_call": 599,
+   "minutes": 304,
+   "stop": "wall_budget",
+   "text_tool_calls": 24,
+   "failures": {
+    "escaped newlines in code": 16
+   },
+   "mean_prompt_tokens": 5155,
+   "prefix_reused": 0.424
+  },
+  {
+   "run": 5,
+   "mode": "rlc",
+   "best": 1.558,
+   "rounds": 40,
+   "failed_rounds": 36,
+   "retry_rate": 0.9,
+   "last_gain_round": 11,
+   "first_compaction_round": 12,
+   "compactions": 19,
+   "llm_calls": 62,
+   "s_per_call": 182,
+   "minutes": 225,
+   "stop": "round_budget",
+   "text_tool_calls": 0,
+   "failures": {
+    "wrong library API": 29,
+    "undefined name": 7
+   },
+   "mean_prompt_tokens": 4528,
+   "prefix_reused": 0.715
+  }
+ ],
+ "speedup": [
+  9.59,
+  2.38,
+  3.04,
+  4.62,
+  3.29
+ ]
+}
