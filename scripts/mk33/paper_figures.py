@@ -125,6 +125,7 @@ def long_runs(plt):
     fig.legend(handles, labels, loc="lower center", ncol=2, frameon=False, bbox_to_anchor=(0.5, -0.03))
     fig.tight_layout(rect=(0, 0.1, 1, 1))
     fig.savefig(OUT / "long_runs.pdf")
+    fig.savefig(base / "long_runs.png", dpi=200)  # for the README
     plt.close(fig)
 
 
