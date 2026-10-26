@@ -4,6 +4,7 @@
 #     powershell -ExecutionPolicy Bypass -File scripts\mk33\windows\run_local.ps1            # set up + pilot run
 #     powershell -ExecutionPolicy Bypass -File scripts\mk33\windows\run_local.ps1 -Full      # full grid (overnight)
 #     powershell -ExecutionPolicy Bypass -File scripts\mk33\windows\run_local.ps1 -Long      # one 40-round run per mode
+#     ... -Long -Model qwen2.5:7b -Rounds 15 -Minutes 120                                      # shorter long run
 #
 # Needs: Python 3.10+, Git for Windows (the agent's commands run in Git Bash), Ollama.
 # Guide: docs/mk33/WINDOWS.md
@@ -14,7 +15,9 @@ param(
     [string]$Model = "qwen2.5:3b",       # any Ollama model with tool calling
     [int]$Context = 10240,               # Ollama context length; must exceed -Window
     [int]$Window = 8000,                 # agent's text window (tokens)
-    [string]$Out = "bench\local"
+    [string]$Out = "bench\local",
+    [int]$Rounds = 40,                   # -Long: round budget per run
+    [int]$Minutes = 300                  # -Long: time budget per run
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,7 +56,9 @@ ollama create $local -f $modelfile; Check "ollama create"
 Write-Host "using $local (context $Context tokens)"
 
 $env:MODEL_API_KEY = "ollama"       # Ollama ignores the key, the client needs a value
-$common = @("--model", $local, "--base-url", "http://localhost:11434/v1", "--workers", "1",
+# Ollama's native API: same prompts as /v1, plus per-call timings (calls.jsonl in each run folder)
+# that show how much of each prompt was served from Ollama's cache.
+$common = @("--model", $local, "--backend", "ollama", "--base-url", "http://localhost:11434", "--workers", "1",
             "--window", "$Window", "--timeout", "900", "--max-tokens", "1024", "--out", $Out)
 
 Write-Host "== 5. Environments"
@@ -64,7 +69,7 @@ if ($Full -and $Long) { throw "Choose -Full or -Long, not both." }
 
 if ($Long) {
     Write-Host "== 6. Long run: regression task, truncate vs rlc, up to 40 rounds each (about 8 to 10 hours; safe to stop and rerun)"
-    mk33 bench-run @common --tasks regression --modes truncate,rlc --repeats 1 --max-rounds 40 --max-tool-calls 200 --max-minutes 300
+    mk33 bench-run @common --tasks regression --modes truncate,rlc --repeats 1 --max-rounds $Rounds --max-tool-calls (5 * $Rounds) --max-minutes $Minutes
     python -m pip install -q matplotlib
     python scripts/mk33/plot_curves.py $Out
     Write-Host "Figure: $Out\curves.png"

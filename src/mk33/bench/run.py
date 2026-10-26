@@ -269,6 +269,14 @@ def run_one(env: EnvSpec, mode: str, rep: int, cfg: BenchConfig, client: ChatCli
     # Calls the model wrote as text that were recovered and run (mk33.toolcalls).
     row["text_tool_calls"] = getattr(client, "text_tool_calls", 0)
     row["blocked_installs"] = ex.blocked_installs
+    if getattr(client, "call_log", None):  # per-call time and tokens (cache reuse with Ollama)
+        from ..llm import summarize_calls
+
+        row.update(summarize_calls(client.call_log))
+        run_dir.mkdir(parents=True, exist_ok=True)
+        with open(run_dir / "calls.jsonl", "w", encoding="utf-8") as fh:
+            for c in client.call_log:
+                fh.write(json.dumps(c) + "\n")
     if getattr(client, "stats", None):  # local model: KV-cache memory and speed
         from ..kv.client import summarize_stats
 

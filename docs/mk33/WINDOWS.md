@@ -73,6 +73,11 @@ fills up; it ends by drawing `bench\long\curves.png`, with the first compaction 
 powershell -ExecutionPolicy Bypass -File scripts\mk33\windows\run_local.ps1 -Long
 ```
 
+`-Rounds` and `-Minutes` change the long run's budget, for example
+`-Long -Model qwen2.5:7b -Rounds 15 -Minutes 120`. The script talks to Ollama's native API, which reports
+for every model call how long it spent reading the prompt and writing the reply. These go to `calls.jsonl` in
+each run folder and show directly how much of each prompt Ollama served from its cache.
+
 Runs are resumable: stop with Ctrl+C or close the laptop, run the same command again,
 and finished runs are skipped. Results and `report.md` are in `bench\local\`.
 

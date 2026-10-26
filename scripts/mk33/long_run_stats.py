@@ -134,6 +134,12 @@ def one(run_dir: Path, mode: str) -> dict:
         "failures": failures(traj),
     }
     row.update(replay(traj, config(run_dir), mode))
+    calls = d / "calls.jsonl"  # runs made with --backend ollama: measured per-call timings
+    if calls.exists():
+        from mk33.llm import summarize_calls
+
+        log = [json.loads(line) for line in calls.read_text(encoding="utf-8").splitlines() if line.strip()]
+        row["measured"] = summarize_calls(log)
     return row
 
 

@@ -55,7 +55,7 @@ def _openai_client_replying(content):
     resp = SimpleNamespace(choices=[SimpleNamespace(message=msg)])
     c = object.__new__(OpenAIChatClient)
     c.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kw: resp)))
-    c.model, c.temperature, c.max_tokens, c.text_tool_calls = "m", 0.7, 100, 0
+    c.model, c.temperature, c.max_tokens, c.text_tool_calls, c.call_log = "m", 0.7, 100, 0, []
     return c
 
 

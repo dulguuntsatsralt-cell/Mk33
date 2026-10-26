@@ -269,6 +269,14 @@ def cmd_bench_run(a) -> int:
         factory = HFClientFactory(a.model, budget=a.kv_budget or a.window, sinks=a.kv_sinks, recent=a.kv_recent,
                                   chunk=a.kv_chunk, temperature=a.temperature, max_tokens=a.max_tokens,
                                   device=a.device, dtype=a.dtype, quantize=a.quantize)
+    elif a.backend == "ollama":
+        if not a.model:
+            raise SystemExit("--model <ollama model name> is required with --backend ollama")
+        from .llm import OllamaChatClient
+
+        model = a.model
+        factory = lambda: OllamaChatClient(a.model, a.base_url, temperature=a.temperature,
+                                           max_tokens=a.max_tokens, timeout=a.timeout)
     else:
         if not a.model:
             raise SystemExit("--model is required unless --dry-run")
@@ -393,8 +401,9 @@ def main(argv: list[str] | None = None) -> int:
         no_think={"action": "store_true", "help": "turn off Qwen3 thinking (/no_think); much faster on CPU"},
         timeout={"type": float, "default": 300.0, "help": "seconds before one model call is abandoned"},
         rpm={"type": float, "default": 0.0, "help": "max model calls per minute (for free API tiers); 0 = no pacing"},
-        backend={"default": "openai", "choices": ["openai", "hf"],
-                 "help": "openai: any OpenAI-compatible endpoint; hf: a local Hugging Face model (needed for kv: modes)"},
+        backend={"default": "openai", "choices": ["openai", "ollama", "hf"],
+                 "help": "openai: any OpenAI-compatible endpoint; ollama: Ollama's native API, which also records "
+                         "per-call prompt and reply time (cache reuse); hf: a local Hugging Face model (needed for kv: modes)"},
         device={"help": "hf backend: cuda or cpu (default: cuda if available)"},
         dtype={"default": "auto", "help": "hf backend: auto, bfloat16, float16 or float32"},
         quantize={"default": "", "choices": ["", "4bit", "8bit"],
